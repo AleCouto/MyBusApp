@@ -1,0 +1,228 @@
+﻿@page "/"
+@inject IEnumerable<IBusService> BusServices
+
+<PageTitle>MyBusApp</PageTitle>
+
+@* 1. Adicionado d-flex flex-column align-items-center para centralizar o conteúdo verticalmente se necessário *@
+<div class="container mt-4 d-flex flex-column align-items-center">
+    
+    @* 2. Ajustada a largura da row do cabeçalho para coincidir com o formulário (w-100 e max-width) *@
+    <div class="row border-bottom pb-3 mb-4 w-100">
+        <div class="col text-center"> @* Centraliza o título *@
+            <h1 class="display-5">🚌 MyBusApp</h1>
+            <p class="text-muted">Consulte paragens e horários em tempo real</p>
+        </div>
+    </div>
+
+    @* 3. Container da Pesquisa: Usamos mx-auto para centralizar e definimos uma largura máxima *@
+    <div class="row w-100 justify-content-center">
+        <div class="col-12 col-md-8 col-lg-6 mb-4"> @* Largura adaptável conforme o ecrã *@
+            <div class="input-group shadow-sm">
+                <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+                <input class="form-control" placeholder="Digite o número da linha (ex: 1612)" 
+                       @bind="lineNumber" 
+                       @onkeyup="@(e => e.Key == "Enter" ? Search() : Task.CompletedTask)" />
+                <button class="btn btn-primary px-4" @onclick="Search" disabled="@isLoading">
+                    @if (isLoading) { <span class="spinner-border spinner-border-sm"></span> }
+                    else { <span>Pesquisar</span> }
+                </button>
+            </div>
+        </div>
+    </div>
+
+    @* 4. Container de Resultados e Dropdowns *@
+    <div class="row w-100 justify-content-center">
+        <div class="col-12 col-md-8 col-lg-6 mb-4">
+            @if (hasSearched)
+            {
+                if (currentLine != null)
+                {
+                    <div class="card shadow-sm p-3 border-0 bg-light">
+                        <div class="mb-3">
+                            <label class="form-label fw-bold text-secondary small text-uppercase">1. Selecione o Destino</label>
+                            <select class="form-select form-select-lg shadow-sm" @onchange="OnDirectionSelected">
+                                <option value="">-- Escolha o destino --</option>
+                                @foreach (var direction in directions)
+                                {
+                                    <option value="@direction.Id">@direction.Name</option>
+                                }
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label fw-bold text-secondary small text-uppercase">2. Selecione a Paragem</label>
+                            <select class="form-select shadow-sm" @onchange="OnStopSelected" disabled="@(isFilteringStops || !stops.Any())">
+                                @if (isFilteringStops)
+                                {
+                                    <option>A filtrar percurso...</option>
+                                }
+                                else
+                                {
+                                    <option value="">-- @(stops.Any() ? "Escolha a paragem" : "Selecione o sentido primeiro") --</option>
+                                    @foreach (var stop in stops)
+                                    {
+                                        <option value="@stop.Id">@stop.Name</option>
+                                    }
+                                }
+                            </select>
+                        </div>
+                    </div>
+                }
+                else if (!isLoading)
+                {
+                    <div class="alert alert-warning border-0 shadow-sm">
+                        <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                        Linha <strong>@lineNumber</strong> não encontrada.
+                    </div>
+                }
+            }
+
+            @if (isLoadingArrivals)
+            {
+                <div class="text-center p-5">
+                    <div class="spinner-border text-primary" role="status"></div>
+                    <p class="mt-3 text-muted">A consultar horários em tempo real...</p>
+                </div>
+            }
+            else if (selectedStop != null)
+            {
+                <div class="card shadow-sm border-0 mt-3">
+                    <div class="card-body bg-primary text-white rounded-top d-flex justify-content-between align-items-center">
+                        <div>
+                            <h4 class="mb-0">@selectedStop.Name</h4>
+                            <small class="opacity-75">Próximas passagens</small>
+                        </div>
+                        <button class="btn btn-sm btn-light" @onclick="RefreshArrivals">
+                            <i class="bi bi-arrow-clockwise"></i>
+                        </button>
+                    </div>
+                    
+                    <ul class="list-group list-group-flush">
+                        @if (arrivals.Count > 0)
+                        {
+                            @foreach (var arrival in arrivals)
+                            {
+                                <li class="list-group-item d-flex justify-content-between align-items-center py-3">
+                                    <div>
+                                        <span class="badge bg-primary fs-6 px-3">@arrival.LineNumber</span>
+                                        <span class="ms-2 text-dark small">@arrival.Destination</span>
+                                    </div>
+                                    <div class="text-end">
+                                        <h5 class="mb-0 fw-bold @(arrival.IsRealTime ? "text-success" : "text-dark")">
+                                            @if (arrival.IsRealTime) { <i class="bi bi-broadcast me-1"></i> }
+                                            @arrival.DisplayTime
+                                        </h5>
+                                        <small class="text-muted" style="font-size: 0.75rem;">
+                                            @(arrival.IsRealTime ? "Tempo Real" : "Agendado")
+                                        </small>
+                                    </div>
+                                </li>
+                            }
+                        }
+                        else
+                        {
+                            <li class="list-group-item p-5 text-center text-muted">
+                                <i class="bi bi-clock-history fs-1 d-block mb-2 opacity-25"></i>
+                                Sem previsões de chegada para esta linha agora.
+                            </li>
+                        }
+                    </ul>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private string lineNumber = string.Empty;
+    private BusLine? currentLine;
+    private IBusService? activeService;
+    private List<BusDirection> directions = new();
+    private List<BusStop> stops = new();
+    private List<BusArrival> arrivals = new();
+
+    private BusStop? selectedStop;
+    private bool isLoading;
+    private bool isFilteringStops;
+    private bool isLoadingArrivals;
+    private bool hasSearched;
+
+    private async Task Search()
+    {
+        if (string.IsNullOrWhiteSpace(lineNumber)) return;
+
+        isLoading = true;
+        hasSearched = true;
+        ResetSelections();
+
+        // Percorre todos os serviços registados até encontrar a linha
+        // Garante que a operadora correta fica guardada em activeService
+        foreach (var service in BusServices)
+        {
+            var line = await service.GetLineAsync(lineNumber);
+            if (line != null)
+            {
+                currentLine = line;
+                activeService = service;
+                // Carregamos os sentidos (Patterns/Variants conforme a operadora)
+                directions = await service.GetDirectionsAsync(line.Id);
+                break;
+            }
+        }
+
+        isLoading = false;
+    }
+
+    private async Task OnDirectionSelected(ChangeEventArgs e)
+    {
+        var selectedId = e.Value?.ToString();
+        selectedStop = null;
+        arrivals.Clear();
+
+        if (string.IsNullOrEmpty(selectedId) || currentLine == null || activeService == null)
+            return;
+
+        isFilteringStops = true;
+
+        // O serviço ativo trata internamente da ordenação e filtragem das paragens
+        // conforme o sentido selecionado (equivalente ao Path/StopSequence anterior)
+        stops = await activeService.GetStopsAsync(selectedId, currentLine.Id);
+
+        isFilteringStops = false;
+    }
+
+    private async Task OnStopSelected(ChangeEventArgs e)
+    {
+        var stopId = e.Value?.ToString();
+        var stop = stops.FirstOrDefault(s => s.Id == stopId);
+        if (stop != null)
+        {
+            selectedStop = stop;
+            await RefreshArrivals();
+        }
+    }
+
+    private async Task RefreshArrivals()
+    {
+        if (selectedStop == null || currentLine == null || activeService == null) return;
+
+        isLoadingArrivals = true;
+
+        // O serviço ativo filtra e ordena as chegadas internamente
+        // (filtro por linha, hora atual, e Take(5) ficam encapsulados no serviço)
+        arrivals = await activeService.GetArrivalsAsync(selectedStop.Id, currentLine.Id);
+
+        isLoadingArrivals = false;
+    }
+
+    // Utilitário: limpa todo o estado entre pesquisas
+    private void ResetSelections()
+    {
+        currentLine = null;
+        activeService = null;
+        selectedStop = null;
+        directions.Clear();
+        stops.Clear();
+        arrivals.Clear();
+    }
+}
