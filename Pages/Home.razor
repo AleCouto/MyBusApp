@@ -1,5 +1,5 @@
 ﻿@page "/"
-@inject IEnumerable<IBusService> BusServices
+@inject BusServiceRouter BusServiceRouter
 
 <PageTitle>MyBusApp</PageTitle>
 
@@ -155,19 +155,17 @@
         hasSearched = true;
         ResetSelections();
 
-        // Percorre todos os serviços registados até encontrar a linha
-        // Garante que a operadora correta fica guardada em activeService
-        foreach (var service in BusServices)
+        var resolved = await BusServiceRouter.ResolveLineAsync(lineNumber);
+        currentLine = resolved.Line;
+        activeService = resolved.Service;
+
+        if (currentLine != null && activeService != null)
         {
-            var line = await service.GetLineAsync(lineNumber);
-            if (line != null)
-            {
-                currentLine = line;
-                activeService = service;
-                // Carregamos os sentidos (Patterns/Variants conforme a operadora)
-                directions = await service.GetDirectionsAsync(line.Id);
-                break;
-            }
+            directions = await activeService.GetDirectionsAsync(currentLine.Id);
+        }
+        else
+        {
+            directions.Clear();
         }
 
         isLoading = false;

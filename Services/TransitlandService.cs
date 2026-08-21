@@ -1,6 +1,6 @@
-using System.Net.Http.Json;
+using System;
 using System.Text.Json;
-using System.Linq;
+using Microsoft.Extensions.DependencyInjection;
 using MyBusApp.Configuration;
 using MyBusApp.Models.Domain;
 using MyBusApp.Models.DTOs.Transitland;
@@ -10,31 +10,60 @@ namespace MyBusApp.Services;
 public class TransitlandService : IBusService
 {
     private readonly HttpClient _http;
+    private readonly string _apiKey;
+    private readonly string _country;
     private readonly JsonSerializerOptions _options = new() { PropertyNameCaseInsensitive = true };
     public BusProvider Provider => BusProvider.Transitland;
     private readonly Dictionary<string, List<TransitlandRouteStopPattern>> _patternCache = new();
 
     public TransitlandService(ApiSettings settings)
     {
-        _http = new HttpClient { BaseAddress = new Uri(settings.Transitland.BaseUrl) };
+        var baseUrl = settings.Transitland.BaseUrl;
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
+            throw new InvalidOperationException("A BaseUrl do Transitland não está configurada.");
+        }
+
+        _http = new HttpClient
+        {
+            BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/", UriKind.Absolute)
+        };
+
+        _apiKey = settings.Transitland.ApiKey;
+        _country = settings.Transitland.Country;
+    }
+
+    public TransitlandService(ApiSettings settings, HttpClient httpClient)
+    {
+        var baseUrl = settings.Transitland.BaseUrl;
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
+            throw new InvalidOperationException("A BaseUrl do Transitland não está configurada.");
+        }
+
+        httpClient.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/", UriKind.Absolute);
+        _http = httpClient;
+        _apiKey = settings.Transitland.ApiKey;
+        _country = settings.Transitland.Country;
     }
 
     public async Task<BusLine?> GetLineAsync(string lineNumber)
     {
         try
         {
-            var routes = await GetTransitlandListAsync<TransitlandRoute>(
-                $"routes?route_number={Uri.EscapeDataString(lineNumber)}&per_page=10", "routes");
-
-            var route = routes.FirstOrDefault(r =>
-                string.Equals(r.RouteNumber, lineNumber, StringComparison.OrdinalIgnoreCase));
+            var routes = await SearchRoutesAsync(lineNumber);
+            var route = routes.FirstOrDefault(r => MatchesLineNumber(r, lineNumber));
 
             if (route == null) return null;
 
+            var displayName = !string.IsNullOrWhiteSpace(route.RouteShortName)
+                ? route.RouteShortName
+                : route.RouteNumber ?? route.Id;
+
             return new BusLine(
                 route.OnestopId ?? route.Id,
-                route.RouteNumber ?? route.Id,
-                route.Name ?? route.RouteNumber ?? route.Id,
+                displayName,
+                route.Name ?? route.LongName ?? route.RouteShortName ?? route.RouteNumber ?? route.Id,
                 "#007bff",
                 Provider);
         }
@@ -91,9 +120,17 @@ public class TransitlandService : IBusService
             var today = nowLocal.ToString("yyyy-MM-dd");
             var nowTime = nowLocal.TimeOfDay;
     
+            // Garantir que usamos um route_onestop_id (onestop id) — se o caller passou um short name, resolver
+            var routeOnestopId = lineId;
+            if (string.IsNullOrWhiteSpace(routeOnestopId) || !routeOnestopId.StartsWith("r-", StringComparison.OrdinalIgnoreCase))
+            {
+                var resolved = await GetRouteByNumberAsync(lineId);
+                routeOnestopId = resolved?.OnestopId ?? resolved?.Id ?? lineId;
+            }
+
             var schedules = await GetTransitlandListAsync<TransitlandSchedule>(
                 $"schedules?stop_onestop_id={Uri.EscapeDataString(stopId)}" +
-                $"&route_onestop_id={Uri.EscapeDataString(lineId)}" +
+                $"&route_onestop_id={Uri.EscapeDataString(routeOnestopId)}" +
                 $"&date={today}&per_page=200",
                 "schedules");
     
@@ -141,7 +178,7 @@ public class TransitlandService : IBusService
         if (_patternCache.TryGetValue(lineId, out var cachedPatterns)) return cachedPatterns;
 
         var patterns = await GetTransitlandListAsync<TransitlandRouteStopPattern>(
-            $"route_stop_patterns?route_onestop_id={Uri.EscapeDataString(lineId)}&per_page=500",
+            $"route_stop_patterns?route_onestop_id={Uri.EscapeDataString(lineId)}&country={Uri.EscapeDataString(_country)}&per_page=500",
             "route_stop_patterns");
 
         if (!patterns.Any()) return new List<TransitlandRouteStopPattern>();
@@ -154,58 +191,177 @@ public class TransitlandService : IBusService
     {
         if (string.IsNullOrWhiteSpace(lineNumber)) return null;
 
-        var routes = await GetTransitlandListAsync<TransitlandRoute>(
-            $"routes?onestop_id={Uri.EscapeDataString(lineNumber)}&per_page=10",
-            "routes");
+        var routes = await SearchRoutesAsync(lineNumber);
+        return routes.FirstOrDefault(r => MatchesLineNumber(r, lineNumber));
+    }
 
-        if (!routes.Any())
+    private async Task<List<TransitlandRoute>> SearchRoutesAsync(string lineNumber)
+    {
+        if (string.IsNullOrWhiteSpace(lineNumber)) return new List<TransitlandRoute>();
+
+        var candidateUrls = new[]
         {
-            routes = await GetTransitlandListAsync<TransitlandRoute>(
-                $"routes?route_number={Uri.EscapeDataString(lineNumber)}&per_page=10",
-                "routes");
+            $"routes?route_short_name={Uri.EscapeDataString(lineNumber)}&country={Uri.EscapeDataString(_country)}&per_page=20",
+            $"routes?route_number={Uri.EscapeDataString(lineNumber)}&country={Uri.EscapeDataString(_country)}&per_page=20",
+            $"routes?search={Uri.EscapeDataString(lineNumber)}&country={Uri.EscapeDataString(_country)}&per_page=20"
+        };
+
+        var allRoutes = new List<TransitlandRoute>();
+        var seenRouteKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var url in candidateUrls)
+        {
+            var routes = await GetTransitlandListAsync<TransitlandRoute>(url, "routes");
+            var validCount = routes.Count(r => IsValidTransitlandRoute(r));
+            Console.WriteLine($"Transitland candidate '{url}' returned {routes.Count} routes, validRoutes={validCount}");
+            if (validCount == 0)
+            {
+                continue;
+            }
+
+            foreach (var route in routes)
+            {
+                var routeKey = route.OnestopId ?? route.Id;
+                if (string.IsNullOrWhiteSpace(routeKey)) continue;
+
+                if (seenRouteKeys.Add(routeKey))
+                {
+                    allRoutes.Add(route);
+                }
+            }
         }
 
-        return routes.FirstOrDefault(r =>
-            string.Equals(r.RouteNumber, lineNumber, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(r.OnestopId, lineNumber, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(r.Id, lineNumber, StringComparison.OrdinalIgnoreCase));
+        return allRoutes
+            .Where(r => MatchesLineNumber(r, lineNumber))
+            .ToList();
+    }
+
+    private static bool IsValidTransitlandRoute(TransitlandRoute route)
+    {
+        if (route == null) return false;
+        if (string.IsNullOrWhiteSpace(route.Id) && string.IsNullOrWhiteSpace(route.OnestopId)) return false;
+
+        return !string.IsNullOrWhiteSpace(route.RouteShortName)
+            || !string.IsNullOrWhiteSpace(route.RouteNumber)
+            || !string.IsNullOrWhiteSpace(route.Name)
+            || !string.IsNullOrWhiteSpace(route.LongName)
+            || !string.IsNullOrWhiteSpace(route.OnestopId);
+    }
+
+    public static bool MatchesLineNumber(TransitlandRoute route, string lineNumber)
+    {
+        if (route == null || string.IsNullOrWhiteSpace(lineNumber)) return false;
+
+        var normalizedQuery = lineNumber.Trim();
+        var normalizedQueryNoSpaces = normalizedQuery.Replace(" ", string.Empty);
+
+        return
+            string.Equals(route.RouteNumber, normalizedQuery, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(route.RouteShortName, normalizedQuery, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(route.RouteNumber?.Replace(" ", string.Empty), normalizedQueryNoSpaces, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(route.RouteShortName?.Replace(" ", string.Empty), normalizedQueryNoSpaces, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(route.OnestopId, normalizedQuery, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(route.Id, normalizedQuery, StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<List<T>> GetTransitlandListAsync<T>(string url, params string[] arrayPropertyNames)
     {
-        var response = await _http.GetAsync(url);
-        if (!response.IsSuccessStatusCode) return new List<T>();
+        // Adiciona a API key a todos os pedidos se estiver configurada
+        var urlWithKey = string.IsNullOrEmpty(_apiKey)
+            ? url
+            : $"{url}&apikey={Uri.EscapeDataString(_apiKey)}";
+
+        var response = await _http.GetAsync(urlWithKey);
+        var status = response.StatusCode;
+        if (!response.IsSuccessStatusCode)
+        {
+            var requestString = new Uri(_http.BaseAddress!, urlWithKey);
+            Console.WriteLine($"Transitland request to {requestString} failed with status {status}");
+            return new List<T>();
+        }
 
         var json = await response.Content.ReadAsStringAsync();
         if (string.IsNullOrWhiteSpace(json)) return new List<T>();
 
-        using var document = JsonDocument.Parse(json);
-        var root = document.RootElement;
-
-        if (root.ValueKind == JsonValueKind.Array)
+        var trimmedBody = json.TrimStart();
+        if (trimmedBody.StartsWith("<", StringComparison.Ordinal))
         {
-            return JsonSerializer.Deserialize<List<T>>(root.GetRawText(), _options) ?? new List<T>();
+            var requestString = new Uri(_http.BaseAddress!, urlWithKey);
+            Console.WriteLine($"Transitland request to {requestString} returned HTML instead of JSON. Status: {status}. Snippet: {GetSnippet(trimmedBody)}");
+            return new List<T>();
         }
 
-        if (root.ValueKind == JsonValueKind.Object)
+        try
         {
-            foreach (var propertyName in arrayPropertyNames)
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+
+            if (root.ValueKind == JsonValueKind.Array)
             {
-                if (root.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.Array)
+                return JsonSerializer.Deserialize<List<T>>(root.GetRawText(), _options) ?? new List<T>();
+            }
+
+            if (root.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var propertyName in arrayPropertyNames)
                 {
-                    return JsonSerializer.Deserialize<List<T>>(property.GetRawText(), _options) ?? new List<T>();
+                    if (TryGetPropertyIgnoreCase(root, propertyName, out var property) && property.ValueKind == JsonValueKind.Array)
+                    {
+                        return JsonSerializer.Deserialize<List<T>>(property.GetRawText(), _options) ?? new List<T>();
+                    }
+                }
+
+                foreach (var property in root.EnumerateObject())
+                {
+                    if (property.Value.ValueKind == JsonValueKind.Array)
+                    {
+                        return JsonSerializer.Deserialize<List<T>>(property.Value.GetRawText(), _options) ?? new List<T>();
+                    }
+                }
+
+                // Se chegámos até aqui, a resposta foi 200 mas não continha arrays — registar chaves e payload para diagnóstico
+                try
+                {
+                    var keys = root.EnumerateObject().Select(p => p.Name).ToArray();
+                    var requestString = new Uri(_http.BaseAddress!, urlWithKey);
+                    Console.WriteLine($"Transitland {requestString} returned JSON object without arrays. Keys: {string.Join(", ", keys)}. Status: {status}. Payload: {GetSnippet(json)}");
+                }
+                catch
+                {
+                    var requestString = new Uri(_http.BaseAddress!, urlWithKey);
+                    Console.WriteLine($"Transitland {requestString} returned JSON object without arrays. (failed to enumerate keys). Status: {status}. Payload: {GetSnippet(json)}");
                 }
             }
 
-            foreach (var property in root.EnumerateObject())
+            return new List<T>();
+        }
+        catch (JsonException ex)
+        {
+            var requestString = new Uri(_http.BaseAddress!, urlWithKey);
+            Console.WriteLine($"Transitland request to {requestString} returned invalid JSON. Status: {status}. Error: {ex.Message}. Snippet: {GetSnippet(json)}");
+            return new List<T>();
+        }
+    }
+
+    private static string GetSnippet(string value)
+    {
+        const int maxLength = 300;
+        var snippet = value.Length <= maxLength ? value : value.Substring(0, maxLength);
+        return snippet.Replace("\r", " ").Replace("\n", " ");
+    }
+
+    private static bool TryGetPropertyIgnoreCase(JsonElement root, string propertyName, out JsonElement property)
+    {
+        property = default;
+        foreach (var candidate in root.EnumerateObject())
+        {
+            if (string.Equals(candidate.Name, propertyName, StringComparison.OrdinalIgnoreCase))
             {
-                if (property.Value.ValueKind == JsonValueKind.Array)
-                {
-                    return JsonSerializer.Deserialize<List<T>>(property.Value.GetRawText(), _options) ?? new List<T>();
-                }
+                property = candidate.Value;
+                return true;
             }
         }
 
-        return new List<T>();
+        return false;
     }
 }

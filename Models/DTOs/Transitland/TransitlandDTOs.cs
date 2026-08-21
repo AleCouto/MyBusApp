@@ -4,9 +4,11 @@ namespace MyBusApp.Models.DTOs.Transitland;
 
 public record TransitlandRoute(
     [property: JsonPropertyName("onestop_id")] string? OnestopId,
-    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("id")] string? Id,
     [property: JsonPropertyName("route_number")] string? RouteNumber,
-    [property: JsonPropertyName("name")] string? Name
+    [property: JsonPropertyName("route_short_name")] string? RouteShortName,
+    [property: JsonPropertyName("name")] string? Name,
+    [property: JsonPropertyName("route_long_name")] string? LongName
 );
 
 public record TransitlandRouteStopPattern(
