@@ -4,7 +4,7 @@
 Use this skill when the work involves HTTP requests, remote services, API consumption, or data loading from external bus data endpoints.
 
 ## Context — MyBusApp
-This application integrates **3 public transport APIs**:
+This application has adapters for **3 public transport APIs**:
 1. **Carris Metropolitana** — `https://api.carrismetropolitana.pt/v2/` (lines, routes, stops, patterns, arrivals)
 2. **Carris Lisboa** — `https://api.carris.pt/v2.7/` (routes, variants, stops, estimations)
 3. **Transitland** — `https://api.transit.land/api/v2/` (routes, route_stop_patterns, stops, schedules)
@@ -14,6 +14,11 @@ Each API has its own:
 - **DTO model** in `Models/DTOs/{Provider}/`
 - **Domain model** mapping in `Models/Domain/BusModels.cs`
 
+### Current runtime configuration
+- `TransitlandService` is the primary provider.
+- `CarrisMetropolitanaService` is the fallback provider.
+- `CarrisLisboaService` is present but not registered because its public API is currently unavailable.
+
 ## Objectives
 - Integrate APIs safely, predictably, and resiliently.
 - Keep network logic centralized in typed service classes.
@@ -22,9 +27,10 @@ Each API has its own:
 ## Rules
 
 ### 1. Service Architecture
-- All API services **must implement** `IBusService` interface.
+- Provider adapters must implement `IBusService`.
 - Inject `ApiSettings` (from `Configuration/ApiSettings.cs`) for `BaseUrl`.
-- Use typed `HttpClient` — created via `new HttpClient { BaseAddress = ... }` in the service constructor.
+- Keep `HttpClient` usage inside services; never make HTTP calls from components or pages.
+- Prefer receiving `HttpClient` through DI for new services. Preserve existing service construction unless the task includes that refactor.
 - Never instantiate `HttpClient` directly inside components or pages.
 - Never expose API keys or secrets in Blazor WASM (they run on the browser).
 
@@ -66,4 +72,3 @@ Each API has its own:
 - Error handling is robust: failures shown gracefully, not crashes.
 - The UI shows spinners during load and messages when no data.
 - DTOs are never used directly in `.razor` files (only domain models).
-

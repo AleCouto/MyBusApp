@@ -58,6 +58,32 @@ namespace MyBusApp.Tests
         }
 
         [Fact]
+        public async Task GetLineAsync_UsesCarrisAgencyAndAcceptsNumericRouteId()
+        {
+            var json = @"{ ""meta"": { ""after"": null }, ""routes"": [ { ""id"": 152634349, ""onestop_id"": ""r-eyckn-714"", ""route_short_name"": ""714"", ""route_long_name"": ""Cais Sodré - Outurela"", ""agency"": { ""onestop_id"": ""o-eyckr-carris"", ""agency_name"": ""Carris"" } } ] }";
+            Uri? requestUri = null;
+            var handler = new FakeHandler(req =>
+            {
+                requestUri = req.RequestUri;
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(json, Encoding.UTF8, "application/json")
+                };
+            });
+
+            var http = new HttpClient(handler) { BaseAddress = new Uri("https://transit.land/api/v2/rest/") };
+            var settings = new ApiSettings();
+            settings.Transitland.BaseUrl = "https://transit.land/api/v2/rest/";
+
+            var svc = new TransitlandService(settings, http);
+            var line = await svc.GetLineAsync("714");
+
+            Assert.NotNull(line);
+            Assert.Equal("r-eyckn-714", line!.Id);
+            Assert.Contains("operator_onestop_id=o-eyckr-carris", requestUri!.Query);
+        }
+
+        [Fact]
         public async Task GetLineAsync_ReturnsNull_WhenHtmlResponseIsReturned()
         {
             var html = "<!DOCTYPE html><html><body>App shell</body></html>";

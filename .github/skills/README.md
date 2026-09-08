@@ -21,20 +21,8 @@ MyBusApp is a **Blazor WebAssembly (.NET 9)** application that aggregates real-t
 | 🧪 Testing | `testing.md` | Unit tests, integration tests, component tests |
 
 ## How to Use These Skills
-- Use these files as guidance when implementing features, reviewing code, or creating new components.
-- Always start with **`minimalist-dev.md`** as the default mindset.
-- Consult the most relevant skill for the specific task at hand.
-- When a task touches multiple areas (e.g., adding a new API page), consult all relevant skills.
+- Read `.github/copilot-instructions.md` first, then `minimalist-dev.md`.
+- Load only the skill files relevant to the task; use multiple files only when the work crosses those concerns.
+- The source code and configuration are authoritative. Update a skill when a deliberate change makes it stale.
 
-## Required Reading Order (for new agents)
-1. `minimalist-dev.md` — Default development philosophy
-2. `blazor-wasm-architecture.md` — Project structure and patterns
-3. `api-integration.md` — How we consume APIs
-4. `blazor-state-management.md` — State patterns
-5. `blazor-ui-styling.md` — UI conventions
-6. `csharp-clean-code.md` — Code style
-7. `bus-app-domain.md` — Domain concepts
-8. `testing.md` — Testing approach
-
-> **Note:** `.github/copilot-instructions.md` (if present) contains the global baseline. Skills in this folder are repository-specific and override the baseline for Blazor/bus-app concerns.
-
+`copilot-instructions.md` contains the global baseline and routing table. The files in this folder provide the detailed, repository-specific guidance.

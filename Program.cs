@@ -17,15 +17,16 @@ builder.Configuration.GetSection("Apis").Bind(apiSettings);
 
 // registar ApiSettings como singleton
 builder.Services.AddSingleton(apiSettings);
+builder.Services.AddSingleton<AppLogger>();
 
-// Transitland — fonte principal para linhas de Carris e outras redes
-builder.Services.AddScoped<IBusService, TransitlandService>();
-
-// Carris Metropolitana — fallback quando a Transitland não encontrar a linha
+// Carris Metropolitana — serviço primário
 builder.Services.AddScoped<IBusService, CarrisMetropolitanaService>();
 
-// Carris Lisboa — desativado; a API pública não está a funcionar
-// builder.Services.AddScoped<IBusService, CarrisLisboaService>();
+// Carris Lisboa — fallback quando a Metropolitana não encontrar a linha
+builder.Services.AddScoped<IBusService, CarrisLisboaService>();
+
+// Transitland — último fallback
+builder.Services.AddScoped<IBusService, TransitlandService>();
 
 builder.Services.AddScoped<BusServiceRouter>();
 builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });

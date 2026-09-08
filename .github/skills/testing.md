@@ -9,6 +9,7 @@ Use this skill when adding or modifying unit tests, integration tests, or UI com
 - Keep the application reliable as it grows.
 
 ## Rules
+- The no-new-library policy applies to production code. Test-only dependencies already declared in `MyBusApp.Tests` (xUnit, test SDK, and Coverlet) are permitted.
 - Test behavior, not implementation details.
 - Keep tests deterministic and isolated.
 - Use unit tests for services and domain logic.

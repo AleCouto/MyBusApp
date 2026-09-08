@@ -1,35 +1,25 @@
-# Copilot Instructions for MyBusApp
+# MyBusApp — Agent Baseline
 
 ## Project Context
 - This repository contains a Blazor WebAssembly application targeting .NET 9.
 - The application is primarily client-side, so performance, responsiveness, and user experience are important.
-- The project is expected to evolve into a bus-related application domain, but implementation details should remain clear, maintainable, and testable.
+- The project is a bus-information application; keep implementation clear, maintainable, and testable.
 
-## General Principles
-- Keep components small, focused, and reusable.
-- Prefer dependency injection for services and HTTP clients.
-- Keep business logic out of UI components whenever possible.
-- Favor clear naming, simple structure, and explicit intent.
-- Avoid unnecessary complexity or premature abstraction.
-- Maintain compatibility with .NET 9 and Blazor WebAssembly patterns.
+## Working Rules
+- Treat the source code and project configuration as the source of truth.
+- Keep changes scoped to the request; do not introduce dependencies or abstractions without a demonstrated need.
+- Consult `minimalist-dev.md` for every implementation. Load only the additional skill(s) that match the task.
 
-## Coding Conventions
-- Use modern C# features supported by .NET 9.
-- Keep nullable reference types enabled and handle nulls explicitly.
-- Use async/await for I/O operations.
-- Prefer typed models, DTOs, and services over ad-hoc structures.
-- Handle errors gracefully and provide user-friendly feedback to the user.
-- Keep methods concise, readable, and easy to test.
+## Skill Routing
 
-## Architecture Expectations
-- Create or update pages and components in a way that is easy to reason about and test.
-- Centralize API calls and remote data access in services.
-- Keep state management predictable and avoid unnecessary global state.
-- Prefer reusable UI primitives over duplicated markup.
-- Keep UI logic minimal and delegate domain rules to services or domain classes.
+| Work | Read |
+|---|---|
+| Pages, components, routing, DI | `skills/blazor-wasm-architecture.md` |
+| Remote data, DTOs, caching | `skills/api-integration.md` |
+| Shared client state | `skills/blazor-state-management.md` |
+| Razor, CSS, accessibility | `skills/blazor-ui-styling.md` |
+| C# models, services, DTOs | `skills/csharp-clean-code.md` |
+| Routes, stops, schedules | `skills/bus-app-domain.md` |
+| Automated tests | `skills/testing.md` |
 
-## Testing Expectations
-- Add or update unit tests when changing business logic.
-- Add component tests where UI behavior is meaningful.
-- Keep tests deterministic, isolated, and fast.
-- Validate behavior rather than implementation details.
+If an intentional change makes a skill inaccurate, update that skill in the same change.

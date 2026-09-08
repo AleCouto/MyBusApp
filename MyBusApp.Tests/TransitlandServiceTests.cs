@@ -34,7 +34,7 @@ public class TransitlandServiceTests
     }
 
     [Fact]
-    public async Task ResolveLineAsync_ShouldPreferTransitlandWhenAvailable()
+    public async Task ResolveLineAsync_ShouldPreferMetropolitanaWhenAvailable()
     {
         var transitlandService = new FakeBusService(BusProvider.Transitland, new BusLine("tr-714", "714", "Linha 714", "#007bff", BusProvider.Transitland));
         var metropolitanaService = new FakeBusService(BusProvider.Metropolitana, new BusLine("met-714", "714", "Linha 714", "#6c757d", BusProvider.Metropolitana));
@@ -43,7 +43,7 @@ public class TransitlandServiceTests
         var result = await router.ResolveLineAsync("714");
 
         Assert.NotNull(result.Line);
-        Assert.Same(transitlandService, result.Service);
+        Assert.Same(metropolitanaService, result.Service);
         Assert.Equal("714", result.Line!.ShortName);
     }
 

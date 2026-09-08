@@ -9,14 +9,16 @@ namespace MyBusApp.Services;
 
 public class TransitlandService : IBusService
 {
+    private const string CarrisAgencyOnestopId = "o-eyckr-carris";
     private readonly HttpClient _http;
     private readonly string _apiKey;
     private readonly string _country;
+    private readonly MyBusApp.Services.AppLogger _logger;
     private readonly JsonSerializerOptions _options = new() { PropertyNameCaseInsensitive = true };
     public BusProvider Provider => BusProvider.Transitland;
     private readonly Dictionary<string, List<TransitlandRouteStopPattern>> _patternCache = new();
 
-    public TransitlandService(ApiSettings settings)
+    public TransitlandService(ApiSettings settings, MyBusApp.Services.AppLogger? logger = null)
     {
         var baseUrl = settings.Transitland.BaseUrl;
         if (string.IsNullOrWhiteSpace(baseUrl))
@@ -31,9 +33,10 @@ public class TransitlandService : IBusService
 
         _apiKey = settings.Transitland.ApiKey;
         _country = settings.Transitland.Country;
+        _logger = logger ?? new MyBusApp.Services.AppLogger();
     }
 
-    public TransitlandService(ApiSettings settings, HttpClient httpClient)
+    public TransitlandService(ApiSettings settings, HttpClient httpClient, MyBusApp.Services.AppLogger? logger = null)
     {
         var baseUrl = settings.Transitland.BaseUrl;
         if (string.IsNullOrWhiteSpace(baseUrl))
@@ -45,6 +48,7 @@ public class TransitlandService : IBusService
         _http = httpClient;
         _apiKey = settings.Transitland.ApiKey;
         _country = settings.Transitland.Country;
+        _logger = logger ?? new MyBusApp.Services.AppLogger();
     }
 
     public async Task<BusLine?> GetLineAsync(string lineNumber)
@@ -59,15 +63,22 @@ public class TransitlandService : IBusService
             var displayName = !string.IsNullOrWhiteSpace(route.RouteShortName)
                 ? route.RouteShortName
                 : route.RouteNumber ?? route.Id;
+            var routeId = route.OnestopId ?? route.Id ?? lineNumber;
+            var shortName = displayName ?? lineNumber;
+            var longName = route.Name ?? route.LongName ?? shortName;
 
             return new BusLine(
-                route.OnestopId ?? route.Id,
-                displayName,
-                route.Name ?? route.LongName ?? route.RouteShortName ?? route.RouteNumber ?? route.Id,
+                routeId,
+                shortName,
+                longName,
                 "#007bff",
                 Provider);
         }
-        catch { return null; }
+        catch (Exception exception)
+        {
+            _logger.Error(nameof(TransitlandService), $"Failed to resolve line '{lineNumber}'.", exception);
+            return null;
+        }
     }
 
     public async Task<List<BusDirection>> GetDirectionsAsync(string lineId)
@@ -199,6 +210,9 @@ public class TransitlandService : IBusService
     {
         if (string.IsNullOrWhiteSpace(lineNumber)) return new List<TransitlandRoute>();
 
+        var carrisRoutes = await GetRoutesByAgencyAsync(lineNumber);
+        if (carrisRoutes.Any()) return carrisRoutes;
+
         var candidateUrls = new[]
         {
             $"routes?route_short_name={Uri.EscapeDataString(lineNumber)}&country={Uri.EscapeDataString(_country)}&per_page=20",
@@ -213,7 +227,7 @@ public class TransitlandService : IBusService
         {
             var routes = await GetTransitlandListAsync<TransitlandRoute>(url, "routes");
             var validCount = routes.Count(r => IsValidTransitlandRoute(r));
-            Console.WriteLine($"Transitland candidate '{url}' returned {routes.Count} routes, validRoutes={validCount}");
+            _logger.Info(nameof(TransitlandService), $"Candidate '{url}' returned {routes.Count} routes, validRoutes={validCount}.");
             if (validCount == 0)
             {
                 continue;
@@ -234,6 +248,28 @@ public class TransitlandService : IBusService
         return allRoutes
             .Where(r => MatchesLineNumber(r, lineNumber))
             .ToList();
+    }
+
+    private async Task<List<TransitlandRoute>> GetRoutesByAgencyAsync(string lineNumber)
+    {
+        var routes = new List<TransitlandRoute>();
+        string? after = null;
+
+        do
+        {
+            var query = $"routes?operator_onestop_id={Uri.EscapeDataString(CarrisAgencyOnestopId)}&per_page=500";
+            if (!string.IsNullOrWhiteSpace(after))
+            {
+                query += $"&after={Uri.EscapeDataString(after)}";
+            }
+
+            var page = await GetTransitlandPageAsync<TransitlandRoute>(query, "routes");
+            routes.AddRange(page.Items.Where(r => MatchesLineNumber(r, lineNumber)));
+            after = page.After;
+        }
+        while (!string.IsNullOrWhiteSpace(after) && !routes.Any());
+
+        return routes;
     }
 
     private static bool IsValidTransitlandRoute(TransitlandRoute route)
@@ -266,6 +302,12 @@ public class TransitlandService : IBusService
 
     private async Task<List<T>> GetTransitlandListAsync<T>(string url, params string[] arrayPropertyNames)
     {
+        var page = await GetTransitlandPageAsync<T>(url, arrayPropertyNames);
+        return page.Items;
+    }
+
+    private async Task<(List<T> Items, string? After)> GetTransitlandPageAsync<T>(string url, params string[] arrayPropertyNames)
+    {
         // Adiciona a API key a todos os pedidos se estiver configurada
         var urlWithKey = string.IsNullOrEmpty(_apiKey)
             ? url
@@ -273,22 +315,22 @@ public class TransitlandService : IBusService
 
         var response = await _http.GetAsync(urlWithKey);
         var status = response.StatusCode;
+        _logger.ApiRequest(nameof(TransitlandService), _http.BaseAddress, urlWithKey);
         if (!response.IsSuccessStatusCode)
         {
-            var requestString = new Uri(_http.BaseAddress!, urlWithKey);
-            Console.WriteLine($"Transitland request to {requestString} failed with status {status}");
-            return new List<T>();
+            _logger.Warning(nameof(TransitlandService), $"API request failed with status {status}: {url}");
+            return (new List<T>(), null);
         }
 
         var json = await response.Content.ReadAsStringAsync();
-        if (string.IsNullOrWhiteSpace(json)) return new List<T>();
+        _logger.ApiResponse(nameof(TransitlandService), url, status, json.Length);
+        if (string.IsNullOrWhiteSpace(json)) return (new List<T>(), null);
 
         var trimmedBody = json.TrimStart();
         if (trimmedBody.StartsWith("<", StringComparison.Ordinal))
         {
-            var requestString = new Uri(_http.BaseAddress!, urlWithKey);
-            Console.WriteLine($"Transitland request to {requestString} returned HTML instead of JSON. Status: {status}. Snippet: {GetSnippet(trimmedBody)}");
-            return new List<T>();
+            _logger.Warning(nameof(TransitlandService), $"API returned HTML instead of JSON. Status: {status}. Endpoint: {url}. Snippet: {GetSnippet(trimmedBody)}");
+            return (new List<T>(), null);
         }
 
         try
@@ -298,7 +340,7 @@ public class TransitlandService : IBusService
 
             if (root.ValueKind == JsonValueKind.Array)
             {
-                return JsonSerializer.Deserialize<List<T>>(root.GetRawText(), _options) ?? new List<T>();
+                return (JsonSerializer.Deserialize<List<T>>(root.GetRawText(), _options) ?? new List<T>(), null);
             }
 
             if (root.ValueKind == JsonValueKind.Object)
@@ -307,7 +349,7 @@ public class TransitlandService : IBusService
                 {
                     if (TryGetPropertyIgnoreCase(root, propertyName, out var property) && property.ValueKind == JsonValueKind.Array)
                     {
-                        return JsonSerializer.Deserialize<List<T>>(property.GetRawText(), _options) ?? new List<T>();
+                        return (JsonSerializer.Deserialize<List<T>>(property.GetRawText(), _options) ?? new List<T>(), GetAfter(root));
                     }
                 }
 
@@ -315,7 +357,7 @@ public class TransitlandService : IBusService
                 {
                     if (property.Value.ValueKind == JsonValueKind.Array)
                     {
-                        return JsonSerializer.Deserialize<List<T>>(property.Value.GetRawText(), _options) ?? new List<T>();
+                        return (JsonSerializer.Deserialize<List<T>>(property.Value.GetRawText(), _options) ?? new List<T>(), GetAfter(root));
                     }
                 }
 
@@ -323,24 +365,28 @@ public class TransitlandService : IBusService
                 try
                 {
                     var keys = root.EnumerateObject().Select(p => p.Name).ToArray();
-                    var requestString = new Uri(_http.BaseAddress!, urlWithKey);
-                    Console.WriteLine($"Transitland {requestString} returned JSON object without arrays. Keys: {string.Join(", ", keys)}. Status: {status}. Payload: {GetSnippet(json)}");
+                    _logger.Warning(nameof(TransitlandService), $"API returned JSON without arrays. Keys: {string.Join(", ", keys)}. Status: {status}. Endpoint: {url}. Payload: {GetSnippet(json)}");
                 }
                 catch
                 {
-                    var requestString = new Uri(_http.BaseAddress!, urlWithKey);
-                    Console.WriteLine($"Transitland {requestString} returned JSON object without arrays. (failed to enumerate keys). Status: {status}. Payload: {GetSnippet(json)}");
+                    _logger.Warning(nameof(TransitlandService), $"API returned JSON without arrays and keys could not be enumerated. Status: {status}. Endpoint: {url}. Payload: {GetSnippet(json)}");
                 }
             }
 
-            return new List<T>();
+            return (new List<T>(), null);
         }
         catch (JsonException ex)
         {
-            var requestString = new Uri(_http.BaseAddress!, urlWithKey);
-            Console.WriteLine($"Transitland request to {requestString} returned invalid JSON. Status: {status}. Error: {ex.Message}. Snippet: {GetSnippet(json)}");
-            return new List<T>();
+            _logger.Error(nameof(TransitlandService), $"API returned invalid JSON. Status: {status}. Endpoint: {url}. Snippet: {GetSnippet(json)}", ex);
+            return (new List<T>(), null);
         }
+    }
+
+    private static string? GetAfter(JsonElement root)
+    {
+        return root.TryGetProperty("meta", out var meta) && meta.TryGetProperty("after", out var after)
+            ? after.ToString()
+            : null;
     }
 
     private static string GetSnippet(string value)
