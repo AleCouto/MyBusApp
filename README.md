@@ -56,9 +56,42 @@ A UI utiliza `IEnumerable<IBusService>`, permitindo que a aplicação suporte no
 - **URL Base:** `https://api.carris.pt/v2.7/`
 - **Documentação:** [api.carris.pt](https://api.carris.pt/swagger/)
 - **Autenticação:** Pública (sem chave)
-- **Estado:** API atualmente indisponível (DNS da Carris Lisboa deixou de resolver)
+- **Estado:** Os dados planeados são publicados como JSON estático por linha; o GTFS ZIP é processado fora do browser
 - **Serviço:** `Services/CarrisLisboaService.cs`
 - **DTOs:** `Models/DTOs/CarrisLisboa/`
+
+#### Gerar dados estáticos da Carris Lisboa
+
+O gerador offline descarrega o GTFS configurado, ou aceita um ZIP local, e cria um manifesto mais um ficheiro JSON por número de linha. O formato é versionado (`version: 1`) e inclui sentidos, paragens, viagens, horários e regras de `calendar.txt`/`calendar_dates.txt`.
+
+```bash
+dotnet run --project Tools/CarrisLisboaDataGenerator/CarrisLisboaDataGenerator.csproj -- \
+  --output wwwroot/data/carris-lisboa
+```
+
+O comando normal lê `Apis:Carris:GtfsSourceUrl` em `wwwroot/appsettings.json`, descarrega o GTFS para um ficheiro temporário, gera os JSON e apaga o ZIP no fim. Para usar um ZIP já descarregado, indique-o opcionalmente:
+
+```bash
+dotnet run --project Tools/CarrisLisboaDataGenerator/CarrisLisboaDataGenerator.csproj -- \
+  --gtfs /caminho/para/carris-gtfs.zip \
+  --output wwwroot/data/carris-lisboa
+```
+
+Publica o diretório gerado exatamente em `wwwroot/data/carris-lisboa/` (ou num alojamento estático/CDN) com esta estrutura:
+
+```text
+data/carris-lisboa/
+├── manifest.json
+└── lines/
+    ├── 714.0123abcd4567ef89.json
+    └── ...
+```
+
+O manifesto contém a versão do formato, `generatedAtUtc`, `feedHash` e os nomes concretos dos ficheiros de linha. O caminho é configurado em `Apis:Carris:StaticDataBaseUrl` e, por defeito, é `data/carris-lisboa/`.
+
+Em desenvolvimento, gere os ficheiros diretamente em `wwwroot/data/carris-lisboa/` antes de iniciar/publicar a aplicação. Em produção, publique o mesmo diretório num CDN ou alojamento estático e configure `StaticDataBaseUrl` com a URL absoluta, terminada em `/`. O manifesto deve ter cache curto ou revalidação (`no-cache`/ETag); os ficheiros de linha com hash podem ter cache longo e imutável (`public, max-age=31536000, immutable`). Os ficheiros gerados devem ser publicados antes da aplicação.
+
+A aplicação descarrega o manifesto uma vez por sessão e apenas o ficheiro da linha consultada. As chegadas da Carris Lisboa são sempre devolvidas como agendadas (`IsRealTime = false`). O ZIP GTFS e os ficheiros estáticos gerados não devem ser versionados.
 
 ### Transitland 🗺️
 - **URL Base:** `https://transit.land/api/v2/rest/`
@@ -120,7 +153,9 @@ Toda a configuração das APIs está centralizada em dois ficheiros:
       "BaseUrl": "https://api.carrismetropolitana.pt/v2/"
     },
     "Carris": {
-      "BaseUrl": "https://api.carris.pt/v2.7/"
+      "BaseUrl": "https://api.carris.pt/v2.7/",
+      "StaticDataBaseUrl": "data/carris-lisboa/",
+      "GtfsSourceUrl": "https://gateway.carris.pt/gateway/gtfs/api/v2.11/GTFS"
     },
     "Transitland": {
       "BaseUrl": "https://transit.land/api/v2/rest/",

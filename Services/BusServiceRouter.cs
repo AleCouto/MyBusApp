@@ -1,4 +1,5 @@
 using MyBusApp.Models.Domain;
+using MyBusApp.Utils;
 
 namespace MyBusApp.Services;
 
@@ -39,34 +40,5 @@ public sealed class BusServiceRouter
 
         _logger.Warning(nameof(BusServiceRouter), $"No provider found line '{lineNumber}'.");
         return (null, null);
-    }
-}
-
-public sealed class AppLogger
-{
-    public void Info(string source, string message) => Write("INFO", source, message);
-
-    public void Warning(string source, string message) => Write("WARN", source, message);
-
-    public void Error(string source, string message, Exception? exception = null)
-    {
-        var details = exception is null ? message : $"{message}. {exception.GetType().Name}: {exception.Message}";
-        Write("ERROR", source, details);
-    }
-
-    public void ApiRequest(string source, Uri? baseAddress, string endpoint)
-        => Info(source, $"API request: {RedactApiKey(new Uri(baseAddress ?? new Uri("http://localhost/"), endpoint))}");
-
-    public void ApiResponse(string source, string endpoint, System.Net.HttpStatusCode statusCode, int payloadLength)
-        => Info(source, $"API response: {endpoint} -> {(int)statusCode} {statusCode}, payload={payloadLength} bytes");
-
-    private static void Write(string level, string source, string message)
-        => Console.WriteLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [{level}] [{source}] {message}");
-
-    private static string RedactApiKey(Uri uri)
-    {
-        var query = string.Join('&', uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries)
-            .Select(part => part.StartsWith("apikey=", StringComparison.OrdinalIgnoreCase) ? "apikey=***" : part));
-        return new UriBuilder(uri) { Query = query }.Uri.ToString();
     }
 }

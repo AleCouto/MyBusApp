@@ -2,13 +2,14 @@ using System.Text.Json;
 using MyBusApp.Configuration;
 using MyBusApp.Models.Domain;
 using MyBusApp.Models.DTOs.CarrisMetropolitana;
+using MyBusApp.Utils;
 
 namespace MyBusApp.Services;
 
 public class CarrisMetropolitanaService : IBusService
 {
     private readonly HttpClient _http;
-    private readonly MyBusApp.Services.AppLogger _logger;
+    private readonly AppLogger _logger;
     private readonly JsonSerializerOptions  _options = new() { PropertyNameCaseInsensitive = true };
     
     // Cache em memória para evitar pedidos repetidos durante a mesma sessão
@@ -19,10 +20,10 @@ public class CarrisMetropolitanaService : IBusService
     
     public BusProvider Provider => BusProvider.Metropolitana;
 
-    public CarrisMetropolitanaService(ApiSettings settings, MyBusApp.Services.AppLogger? logger = null)
+    public CarrisMetropolitanaService(ApiSettings settings, AppLogger? logger = null)
     {
         _http = new HttpClient { BaseAddress = new Uri(settings.CarrisMetropolitana.BaseUrl) };
-        _logger = logger ?? new MyBusApp.Services.AppLogger();
+        _logger = logger ?? new AppLogger();
         _logger.Info(nameof(CarrisMetropolitanaService), $"Initialized with base URL {_http.BaseAddress}");
     }
 
@@ -39,8 +40,16 @@ public class CarrisMetropolitanaService : IBusService
     public async Task<List<BusDirection>> GetDirectionsAsync(string lineId)
     {
         var patterns = await GetPatternsByLineIdAsync(lineId);
-        return patterns.Select(p => new BusDirection(p.Id, p.Headsign)).ToList();
+        return patterns
+            .Select(p => new BusDirection(p.Id, GetDirectionName(p)))
+            .ToList();
     }
+
+    private static string GetDirectionName(Pattern pattern)
+        => !string.IsNullOrWhiteSpace(pattern.Headsign) ? pattern.Headsign
+            : !string.IsNullOrWhiteSpace(pattern.LongName) ? pattern.LongName
+            : !string.IsNullOrWhiteSpace(pattern.ShortName) ? pattern.ShortName
+            : pattern.Id;
 
     public async Task<List<BusStop>> GetStopsAsync(string directionId, string lineId)
     {
@@ -66,7 +75,8 @@ public class CarrisMetropolitanaService : IBusService
     {
         var rawArrivals = await GetArrivalsByStopIdAsync(stopId);
         _logger.Info(nameof(CarrisMetropolitanaService), $"Arrivals loaded for stop '{stopId}': {rawArrivals.Count} records; filtering for line '{lineId}'.");
-          var currentTime = DateTime.Now.TimeOfDay;
+        
+        var currentTime = DateTime.Now.TimeOfDay;
 
         var arrivals = rawArrivals
             .Where(a => (a.LineId == lineId || a.RouteId == lineId || a.PatternId.StartsWith(lineId + "_")) &&

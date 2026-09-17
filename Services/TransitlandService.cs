@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using MyBusApp.Configuration;
 using MyBusApp.Models.Domain;
 using MyBusApp.Models.DTOs.Transitland;
+using MyBusApp.Utils;
 
 namespace MyBusApp.Services;
 
@@ -13,12 +14,12 @@ public class TransitlandService : IBusService
     private readonly HttpClient _http;
     private readonly string _apiKey;
     private readonly string _country;
-    private readonly MyBusApp.Services.AppLogger _logger;
+    private readonly AppLogger _logger;
     private readonly JsonSerializerOptions _options = new() { PropertyNameCaseInsensitive = true };
     public BusProvider Provider => BusProvider.Transitland;
     private readonly Dictionary<string, List<TransitlandRouteStopPattern>> _patternCache = new();
 
-    public TransitlandService(ApiSettings settings, MyBusApp.Services.AppLogger? logger = null)
+    public TransitlandService(ApiSettings settings, AppLogger? logger = null)
     {
         var baseUrl = settings.Transitland.BaseUrl;
         if (string.IsNullOrWhiteSpace(baseUrl))
@@ -33,10 +34,10 @@ public class TransitlandService : IBusService
 
         _apiKey = settings.Transitland.ApiKey;
         _country = settings.Transitland.Country;
-        _logger = logger ?? new MyBusApp.Services.AppLogger();
+        _logger = logger ?? new AppLogger();
     }
 
-    public TransitlandService(ApiSettings settings, HttpClient httpClient, MyBusApp.Services.AppLogger? logger = null)
+    public TransitlandService(ApiSettings settings, HttpClient httpClient, AppLogger? logger = null)
     {
         var baseUrl = settings.Transitland.BaseUrl;
         if (string.IsNullOrWhiteSpace(baseUrl))
@@ -48,7 +49,7 @@ public class TransitlandService : IBusService
         _http = httpClient;
         _apiKey = settings.Transitland.ApiKey;
         _country = settings.Transitland.Country;
-        _logger = logger ?? new MyBusApp.Services.AppLogger();
+        _logger = logger ?? new AppLogger();
     }
 
     public async Task<BusLine?> GetLineAsync(string lineNumber)

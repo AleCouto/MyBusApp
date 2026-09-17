@@ -1,118 +1,248 @@
 using System.Globalization;
-using System.IO.Compression;
-using System.Text;
+using System.Net.Http.Headers;
+using System.Text.Json;
 using MyBusApp.Configuration;
 using MyBusApp.Models.Domain;
+using MyBusApp.Models.StaticData;
+using MyBusApp.Utils;
 
 namespace MyBusApp.Services;
 
 public sealed class CarrisLisboaService : IBusService
 {
+    private const int StaticDataVersion = 1;
     private readonly HttpClient _http;
-    private readonly MyBusApp.Services.AppLogger _logger;
-    private GtfsData? _data;
+    private readonly AppLogger _logger;
+    private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        PropertyNameCaseInsensitive = true
+    };
+    private readonly Dictionary<string, CarrisLisboaStaticLine> _lineCache = new(StringComparer.OrdinalIgnoreCase);
+    private CarrisLisboaStaticManifest? _manifest;
+    private bool _manifestLoaded;
 
     public BusProvider Provider => BusProvider.CarrisLisboa;
 
-    public CarrisLisboaService(ApiSettings settings, MyBusApp.Services.AppLogger? logger = null)
+    public CarrisLisboaService(ApiSettings settings, AppLogger? logger = null)
+        : this(settings, new HttpClient { BaseAddress = new Uri("http://localhost/", UriKind.Absolute) }, logger)
     {
-        _http = new HttpClient { BaseAddress = new Uri(settings.Carris.BaseUrl.TrimEnd('/') + "/") };
-        _logger = logger ?? new MyBusApp.Services.AppLogger();
-        _logger.Info(nameof(CarrisLisboaService), $"Initialized with GTFS URL {_http.BaseAddress}");
+    }
+
+    public CarrisLisboaService(ApiSettings settings, HttpClient httpClient, AppLogger? logger = null)
+    {
+        _http = httpClient;
+        _logger = logger ?? new AppLogger();
+        var configuredBaseUrl = string.IsNullOrWhiteSpace(settings.Carris.StaticDataBaseUrl)
+            ? "data/carris-lisboa/"
+            : settings.Carris.StaticDataBaseUrl;
+        _http.BaseAddress = CreateBaseUri(_http.BaseAddress, configuredBaseUrl);
+        _logger.Info(nameof(CarrisLisboaService), $"Initialized with static data URL {_http.BaseAddress}");
     }
 
     public async Task<BusLine?> GetLineAsync(string lineNumber)
     {
-        var data = await LoadAsync();
-        var route = data.Routes.FirstOrDefault(r => r.ShortName.Equals(lineNumber.Trim(), StringComparison.OrdinalIgnoreCase));
-        return route is null ? null : new BusLine(route.Id, route.ShortName, route.LongName, "#dc3545", Provider);
+        var line = await GetLineDataAsync(lineNumber);
+        return line is null ? null : new BusLine(line.Number, line.Number, line.Name, "#dc3545", Provider);
     }
 
     public async Task<List<BusDirection>> GetDirectionsAsync(string lineId)
     {
-        var data = await LoadAsync();
-        var route = data.Routes.FirstOrDefault(r => r.Id == lineId || r.ShortName == lineId);
-        if (route is null) return [];
-
-        var routeIds = data.Routes.Where(r => r.ShortName == route.ShortName).Select(r => r.Id).ToHashSet();
-        return data.Trips.Where(t => routeIds.Contains(t.RouteId))
-            .GroupBy(t => new { t.RouteId, Direction = t.DirectionId ?? t.HeadSign ?? "unknown" })
-            .Select(g => new BusDirection($"{g.Key.RouteId}|{g.Key.Direction}", g.First().HeadSign ?? route.LongName))
-            .ToList();
+        var line = await GetLineDataAsync(lineId);
+        return line?.Directions
+            .Select(direction => new BusDirection(
+                direction.Id,
+                string.IsNullOrWhiteSpace(direction.Name) ? line.Name : direction.Name))
+            .ToList() ?? [];
     }
 
     public async Task<List<BusStop>> GetStopsAsync(string directionId, string lineId)
     {
-        var data = await LoadAsync();
-        var route = data.Routes.FirstOrDefault(r => r.Id == lineId || r.ShortName == lineId);
-        if (route is null) return [];
-        var direction = directionId.Split('|', 2);
-        var directionRouteId = direction.Length == 2 ? direction[0] : route.Id;
-        var directionName = direction.Length == 2 ? direction[1] : directionId;
-        var tripIds = data.Trips.Where(t => t.RouteId == directionRouteId && (directionName == (t.DirectionId ?? t.HeadSign ?? "unknown"))).Select(t => t.Id).ToHashSet();
-        var trip = data.StopTimes.Where(s => tripIds.Contains(s.TripId)).GroupBy(s => s.TripId).FirstOrDefault();
-        return trip?.OrderBy(s => s.Sequence).Select(s => data.Stops.FirstOrDefault(stop => stop.Id == s.StopId)).Where(s => s is not null).Select(s => new BusStop(s!.Id, s.Name, s.Locality)).ToList() ?? [];
+        var line = await GetLineDataAsync(lineId);
+        var direction = line?.Directions.FirstOrDefault(item => item.Id == directionId);
+        if (line is null || direction is null) return [];
+
+        var directionKey = direction.Id[(direction.Id.IndexOf('|') + 1)..];
+        var tripIds = line.Trips
+            .Where(trip => trip.RouteId == direction.RouteId && trip.DirectionId == directionKey)
+            .Select(trip => trip.Id)
+            .ToHashSet(StringComparer.Ordinal);
+        var stopsById = line.Stops.ToDictionary(stop => stop.Id, StringComparer.Ordinal);
+        var stopTimes = line.StopTimes
+            .Where(stopTime => tripIds.Contains(stopTime.TripId))
+            .GroupBy(stopTime => stopTime.TripId)
+            .SelectMany(group => group.OrderBy(stopTime => stopTime.Sequence))
+            .GroupBy(stopTime => stopTime.StopId)
+            .Select(group => group.OrderBy(stopTime => stopTime.Sequence).First())
+            .OrderBy(stopTime => stopTime.Sequence);
+
+        return stopTimes
+            .Where(stopTime => stopsById.ContainsKey(stopTime.StopId))
+            .Select(stopTime => stopsById[stopTime.StopId])
+            .Select(stop => new BusStop(stop.Id, stop.Name, stop.Locality))
+            .ToList();
     }
 
     public async Task<List<BusArrival>> GetArrivalsAsync(string stopId, string lineId)
     {
-        var data = await LoadAsync();
-        var route = data.Routes.FirstOrDefault(r => r.Id == lineId || r.ShortName == lineId);
-        if (route is null) return [];
-        var now = DateTime.Now.TimeOfDay;
-        return data.StopTimes.Where(s => s.StopId == stopId && s.Time >= now && data.Trips.Any(t => t.Id == s.TripId && t.RouteId == route.Id)).OrderBy(s => s.Time).Take(5).Select(s => { var trip = data.Trips.First(t => t.Id == s.TripId); return new BusArrival(route.ShortName, trip.HeadSign ?? route.LongName, s.Time.ToString(@"hh\:mm"), false); }).ToList();
-    }
+        var line = await GetLineDataAsync(lineId);
+        if (line is null) return [];
 
-    private async Task<GtfsData> LoadAsync()
-    {
-        if (_data is not null) return _data;
         try
         {
-            _logger.ApiRequest(nameof(CarrisLisboaService), _http.BaseAddress, string.Empty);
-            await using var stream = await _http.GetStreamAsync(string.Empty);
-            _logger.Info(nameof(CarrisLisboaService), "GTFS download completed. Reading archive files.");
-            using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
-            var data = new GtfsData(ReadRoutes(archive), ReadTrips(archive), ReadStops(archive), ReadStopTimes(archive));
-            _logger.Info(nameof(CarrisLisboaService), $"GTFS loaded: routes={data.Routes.Count}, trips={data.Trips.Count}, stops={data.Stops.Count}, stop_times={data.StopTimes.Count}.");
-            return _data = data;
+            var lisbonZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Lisbon");
+            var now = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, lisbonZone);
+            return GetUpcomingArrivals(line, stopId, now);
         }
         catch (Exception exception)
         {
-            _logger.Error(nameof(CarrisLisboaService), "Failed to load GTFS archive", exception);
-            return _data = new GtfsData([], [], [], []);
+            _logger.Error(nameof(CarrisLisboaService), $"Failed to filter static arrivals for stop '{stopId}'.", exception);
+            return [];
         }
     }
 
-    private static List<GtfsRoute> ReadRoutes(ZipArchive a) => ReadCsv(a, "routes.txt").Skip(1).Select(Csv).Where(c => c.Count > 3).Select(c => new GtfsRoute(c[0], c[2], c[3])).ToList();
-    private static List<GtfsTrip> ReadTrips(ZipArchive a) => ReadCsv(a, "trips.txt").Skip(1).Select(Csv).Where(c => c.Count > 6).Select(c => new GtfsTrip(c[2], c[0], c[5], c[3])).ToList();
-    private static List<GtfsStop> ReadStops(ZipArchive a) => ReadCsv(a, "stops.txt").Skip(1).Select(Csv).Where(c => c.Count > 2).Select(c => new GtfsStop(c[0], c[2], c.Count > 7 ? c[7] : string.Empty)).ToList();
-    private static List<GtfsStopTime> ReadStopTimes(ZipArchive a) => ReadCsv(a, "stop_times.txt").Skip(1).Select(Csv).Where(c => c.Count > 5 && TimeSpan.TryParse(c[1], CultureInfo.InvariantCulture, out _)).Select(c => new GtfsStopTime(c[0], c[3], TimeSpan.Parse(c[1], CultureInfo.InvariantCulture), int.TryParse(c[4], out var n) ? n : 0)).ToList();
-
-    private static IEnumerable<string> ReadCsv(ZipArchive archive, string name)
+    public static List<BusArrival> GetUpcomingArrivals(
+        CarrisLisboaStaticLine line,
+        string stopId,
+        DateTimeOffset now)
     {
-        var entry = archive.GetEntry(name);
-        if (entry is null) return [];
-        using var reader = new StreamReader(entry.Open(), Encoding.UTF8);
-        var lines = new List<string>();
-        while (reader.ReadLine() is { } line) lines.Add(line);
-        return lines;
-    }
+        var tripsById = line.Trips.ToDictionary(trip => trip.Id, StringComparer.Ordinal);
+        var candidates = new List<(DateTime ScheduledAt, CarrisLisboaStaticTrip Trip, CarrisLisboaStaticStopTime StopTime)>();
 
-    private static List<string> Csv(string line)
-    {
-        var values = new List<string>(); var value = new StringBuilder(); var quoted = false;
-        foreach (var character in line)
+        for (var offset = -1; offset <= 1; offset++)
         {
-            if (character == '"') quoted = !quoted;
-            else if (character == ',' && !quoted) { values.Add(value.ToString()); value.Clear(); }
-            else value.Append(character);
+            var serviceDate = now.Date.AddDays(offset);
+            foreach (var stopTime in line.StopTimes.Where(item => item.StopId == stopId))
+            {
+                if (!tripsById.TryGetValue(stopTime.TripId, out var trip) ||
+                    !IsServiceActive(line, trip.ServiceId, serviceDate))
+                    continue;
+
+                var scheduledAt = serviceDate.AddSeconds(stopTime.TimeSeconds);
+                if (scheduledAt > now.DateTime)
+                    candidates.Add((scheduledAt, trip, stopTime));
+            }
         }
-        values.Add(value.ToString()); return values;
+
+        return candidates
+            .OrderBy(candidate => candidate.ScheduledAt)
+            .Take(5)
+            .Select(candidate => new BusArrival(
+                line.Number,
+                string.IsNullOrWhiteSpace(candidate.Trip.Headsign) ? line.Name : candidate.Trip.Headsign,
+                FormatGtfsTime(candidate.StopTime.TimeSeconds),
+                false))
+            .ToList();
     }
 
-    private sealed record GtfsData(List<GtfsRoute> Routes, List<GtfsTrip> Trips, List<GtfsStop> Stops, List<GtfsStopTime> StopTimes);
-    private sealed record GtfsRoute(string Id, string ShortName, string LongName);
-    private sealed record GtfsTrip(string Id, string RouteId, string? DirectionId, string? HeadSign);
-    private sealed record GtfsStop(string Id, string Name, string Locality);
-    private sealed record GtfsStopTime(string TripId, string StopId, TimeSpan Time, int Sequence);
+    public static bool IsServiceActive(CarrisLisboaStaticLine line, string serviceId, DateTime date)
+    {
+        var calendar = line.Calendar.FirstOrDefault(item => item.ServiceId == serviceId);
+        var dateKey = date.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
+        var exception = line.CalendarDates.FirstOrDefault(item => item.ServiceId == serviceId && item.Date == dateKey);
+        if (exception is not null)
+            return exception.ExceptionType == 1;
+
+        if (calendar is null || !DateTime.TryParseExact(calendar.StartDate, "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var startDate) ||
+            !DateTime.TryParseExact(calendar.EndDate, "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var endDate) ||
+            date.Date < startDate.Date || date.Date > endDate.Date)
+            return false;
+
+        return date.DayOfWeek switch
+        {
+            DayOfWeek.Monday => calendar.Monday,
+            DayOfWeek.Tuesday => calendar.Tuesday,
+            DayOfWeek.Wednesday => calendar.Wednesday,
+            DayOfWeek.Thursday => calendar.Thursday,
+            DayOfWeek.Friday => calendar.Friday,
+            DayOfWeek.Saturday => calendar.Saturday,
+            DayOfWeek.Sunday => calendar.Sunday,
+            _ => false
+        };
+    }
+
+    private async Task<CarrisLisboaStaticLine?> GetLineDataAsync(string lineNumber)
+    {
+        if (string.IsNullOrWhiteSpace(lineNumber)) return null;
+        var normalizedLineNumber = lineNumber.Trim();
+        if (_lineCache.TryGetValue(normalizedLineNumber, out var cachedLine)) return cachedLine;
+
+        var manifest = await LoadManifestAsync();
+        var manifestLine = manifest?.Lines.FirstOrDefault(line =>
+            string.Equals(line.Number, normalizedLineNumber, StringComparison.OrdinalIgnoreCase));
+        if (manifestLine is null) return null;
+
+        try
+        {
+            using var response = await _http.GetAsync(manifestLine.File);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.Warning(nameof(CarrisLisboaService), $"Static line data failed with status {response.StatusCode}: {manifestLine.File}");
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            var line = JsonSerializer.Deserialize<CarrisLisboaStaticLine>(json, _jsonOptions);
+            if (line is null || line.Version != StaticDataVersion)
+            {
+                _logger.Warning(nameof(CarrisLisboaService), $"Static line data has an unsupported format: {manifestLine.File}");
+                return null;
+            }
+
+            _lineCache[normalizedLineNumber] = line;
+            return line;
+        }
+        catch (Exception exception)
+        {
+            _logger.Error(nameof(CarrisLisboaService), $"Failed to load static line data: {manifestLine.File}", exception);
+            return null;
+        }
+    }
+
+    private async Task<CarrisLisboaStaticManifest?> LoadManifestAsync()
+    {
+        if (_manifestLoaded) return _manifest;
+        _manifestLoaded = true;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "manifest.json");
+            request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
+            using var response = await _http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.Warning(nameof(CarrisLisboaService), $"Static data manifest failed with status {response.StatusCode}.");
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            var manifest = JsonSerializer.Deserialize<CarrisLisboaStaticManifest>(json, _jsonOptions);
+            if (manifest is null || manifest.Version != StaticDataVersion)
+            {
+                _logger.Warning(nameof(CarrisLisboaService), "Static data manifest has an unsupported format.");
+                return null;
+            }
+
+            return _manifest = manifest;
+        }
+        catch (Exception exception)
+        {
+            _logger.Error(nameof(CarrisLisboaService), "Failed to load static data manifest.", exception);
+            return null;
+        }
+    }
+
+    private static Uri CreateBaseUri(Uri? currentBaseUri, string configuredBaseUrl)
+    {
+        if (Uri.TryCreate(configuredBaseUrl, UriKind.Absolute, out var absoluteUri))
+            return new Uri(absoluteUri.ToString().TrimEnd('/') + "/", UriKind.Absolute);
+
+        var baseUri = currentBaseUri ?? new Uri("http://localhost/", UriKind.Absolute);
+        return new Uri(baseUri, configuredBaseUrl.TrimStart('/').TrimEnd('/') + "/");
+    }
+
+    private static string FormatGtfsTime(int seconds)
+    {
+        var timeOfDaySeconds = seconds % (24 * 60 * 60);
+        return TimeSpan.FromSeconds(timeOfDaySeconds).ToString(@"hh\:mm", CultureInfo.InvariantCulture);
+    }
 }

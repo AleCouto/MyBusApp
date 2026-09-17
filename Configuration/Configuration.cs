@@ -12,6 +12,8 @@ public class ApiSettings
 public class ApiEndpoint
 {
     public string BaseUrl { get; set; } = string.Empty;
-public string ApiKey { get; set; } = string.Empty;
+    public string StaticDataBaseUrl { get; set; } = string.Empty;
+    public string GtfsSourceUrl { get; set; } = string.Empty;
+    public string ApiKey { get; set; } = string.Empty;
     public string Country { get; set; } = "PT";
 }

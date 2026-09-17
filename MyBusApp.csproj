@@ -13,6 +13,15 @@
 
   <ItemGroup>
     <Compile Remove="MyBusApp.Tests/**/*.cs" />
+    <Content Remove="MyBusApp.Tests/**" />
+    <EmbeddedResource Remove="MyBusApp.Tests/**" />
+    <None Remove="MyBusApp.Tests/**" />
+    <RazorComponent Remove="MyBusApp.Tests/**" />
+    <Compile Remove="Tools/**/*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Update="wwwroot/data/carris-lisboa/**/*.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

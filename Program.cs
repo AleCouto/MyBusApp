@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using MyBusApp;
 using MyBusApp.Configuration;
 using MyBusApp.Services;
+using MyBusApp.Utils;
 
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
 builder.RootComponents.Add<App>("#app");
@@ -23,7 +24,12 @@ builder.Services.AddSingleton<AppLogger>();
 builder.Services.AddScoped<IBusService, CarrisMetropolitanaService>();
 
 // Carris Lisboa — fallback quando a Metropolitana não encontrar a linha
-builder.Services.AddScoped<IBusService, CarrisLisboaService>();
+builder.Services.AddScoped<CarrisLisboaService>(sp =>
+	new CarrisLisboaService(
+		apiSettings,
+		new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) },
+		sp.GetRequiredService<AppLogger>()));
+builder.Services.AddScoped<IBusService>(sp => sp.GetRequiredService<CarrisLisboaService>());
 
 // Transitland — último fallback
 builder.Services.AddScoped<IBusService, TransitlandService>();
