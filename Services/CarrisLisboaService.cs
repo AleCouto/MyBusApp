@@ -10,15 +10,15 @@ namespace MyBusApp.Services;
 
 public sealed class CarrisLisboaService : IBusService
 {
-    private const int StaticDataVersion = 1;
+    private const int StaticDataVersion = 2;
     private readonly HttpClient _http;
     private readonly AppLogger _logger;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true
     };
-    private readonly Dictionary<string, CarrisLisboaStaticLine> _lineCache = new(StringComparer.OrdinalIgnoreCase);
-    private CarrisLisboaStaticManifest? _manifest;
+    private readonly Dictionary<string, GtfsStaticLine> _lineCache = new(StringComparer.OrdinalIgnoreCase);
+    private GtfsStaticManifest? _manifest;
     private bool _manifestLoaded;
 
     public BusProvider Provider => BusProvider.CarrisLisboa;
@@ -101,12 +101,12 @@ public sealed class CarrisLisboaService : IBusService
     }
 
     public static List<BusArrival> GetUpcomingArrivals(
-        CarrisLisboaStaticLine line,
+        GtfsStaticLine line,
         string stopId,
         DateTimeOffset now)
     {
         var tripsById = line.Trips.ToDictionary(trip => trip.Id, StringComparer.Ordinal);
-        var candidates = new List<(DateTime ScheduledAt, CarrisLisboaStaticTrip Trip, CarrisLisboaStaticStopTime StopTime)>();
+        var candidates = new List<(DateTime ScheduledAt, GtfsStaticTrip Trip, GtfsStaticStopTime StopTime, int TimeSeconds)>();
 
         for (var offset = -1; offset <= 1; offset++)
         {
@@ -117,9 +117,10 @@ public sealed class CarrisLisboaService : IBusService
                     !IsServiceActive(line, trip.ServiceId, serviceDate))
                     continue;
 
-                var scheduledAt = serviceDate.AddSeconds(stopTime.TimeSeconds);
+                var timeSeconds = GetScheduledTimeSeconds(stopTime);
+                var scheduledAt = serviceDate.AddSeconds(timeSeconds);
                 if (scheduledAt > now.DateTime)
-                    candidates.Add((scheduledAt, trip, stopTime));
+                    candidates.Add((scheduledAt, trip, stopTime, timeSeconds));
             }
         }
 
@@ -129,12 +130,12 @@ public sealed class CarrisLisboaService : IBusService
             .Select(candidate => new BusArrival(
                 line.Number,
                 string.IsNullOrWhiteSpace(candidate.Trip.Headsign) ? line.Name : candidate.Trip.Headsign,
-                FormatGtfsTime(candidate.StopTime.TimeSeconds),
+                FormatGtfsTime(candidate.TimeSeconds),
                 false))
             .ToList();
     }
 
-    public static bool IsServiceActive(CarrisLisboaStaticLine line, string serviceId, DateTime date)
+    public static bool IsServiceActive(GtfsStaticLine line, string serviceId, DateTime date)
     {
         var calendar = line.Calendar.FirstOrDefault(item => item.ServiceId == serviceId);
         var dateKey = date.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
@@ -160,7 +161,7 @@ public sealed class CarrisLisboaService : IBusService
         };
     }
 
-    private async Task<CarrisLisboaStaticLine?> GetLineDataAsync(string lineNumber)
+    private async Task<GtfsStaticLine?> GetLineDataAsync(string lineNumber)
     {
         if (string.IsNullOrWhiteSpace(lineNumber)) return null;
         var normalizedLineNumber = lineNumber.Trim();
@@ -181,7 +182,13 @@ public sealed class CarrisLisboaService : IBusService
             }
 
             var json = await response.Content.ReadAsStringAsync();
-            var line = JsonSerializer.Deserialize<CarrisLisboaStaticLine>(json, _jsonOptions);
+            if (!HasCurrentStopTimeSchema(json))
+            {
+                _logger.Warning(nameof(CarrisLisboaService), $"Static line data has an unsupported stop time schema: {manifestLine.File}");
+                return null;
+            }
+
+            var line = JsonSerializer.Deserialize<GtfsStaticLine>(json, _jsonOptions);
             if (line is null || line.Version != StaticDataVersion)
             {
                 _logger.Warning(nameof(CarrisLisboaService), $"Static line data has an unsupported format: {manifestLine.File}");
@@ -198,7 +205,7 @@ public sealed class CarrisLisboaService : IBusService
         }
     }
 
-    private async Task<CarrisLisboaStaticManifest?> LoadManifestAsync()
+    private async Task<GtfsStaticManifest?> LoadManifestAsync()
     {
         if (_manifestLoaded) return _manifest;
         _manifestLoaded = true;
@@ -215,7 +222,7 @@ public sealed class CarrisLisboaService : IBusService
             }
 
             var json = await response.Content.ReadAsStringAsync();
-            var manifest = JsonSerializer.Deserialize<CarrisLisboaStaticManifest>(json, _jsonOptions);
+            var manifest = JsonSerializer.Deserialize<GtfsStaticManifest>(json, _jsonOptions);
             if (manifest is null || manifest.Version != StaticDataVersion)
             {
                 _logger.Warning(nameof(CarrisLisboaService), "Static data manifest has an unsupported format.");
@@ -245,4 +252,21 @@ public sealed class CarrisLisboaService : IBusService
         var timeOfDaySeconds = seconds % (24 * 60 * 60);
         return TimeSpan.FromSeconds(timeOfDaySeconds).ToString(@"hh\:mm", CultureInfo.InvariantCulture);
     }
+
+    private static bool HasCurrentStopTimeSchema(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        if (!document.RootElement.TryGetProperty("stopTimes", out var stopTimes) ||
+            stopTimes.ValueKind != JsonValueKind.Array)
+            return false;
+
+        return stopTimes.EnumerateArray().All(stopTime =>
+            stopTime.TryGetProperty("arrivalTimeSeconds", out var arrivalTime) &&
+            arrivalTime.ValueKind == JsonValueKind.Number &&
+            stopTime.TryGetProperty("departureTimeSeconds", out var departureTime) &&
+            departureTime.ValueKind == JsonValueKind.Number);
+    }
+
+    private static int GetScheduledTimeSeconds(GtfsStaticStopTime stopTime)
+        => stopTime.DepartureTimeSeconds > 0 ? stopTime.DepartureTimeSeconds : stopTime.ArrivalTimeSeconds;
 }

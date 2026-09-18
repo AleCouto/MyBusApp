@@ -52,7 +52,7 @@ A UI utiliza `IEnumerable<IBusService>`, permitindo que a aplicação suporte no
 - **Serviço:** `Services/CarrisMetropolitanaService.cs`
 - **DTOs:** `Models/DTOs/CarrisMetropolitana/`
 
-### Carris Lisboa ⚠️
+### GTFS estático
 - **URL Base:** `https://api.carris.pt/v2.7/`
 - **Documentação:** [api.carris.pt](https://api.carris.pt/swagger/)
 - **Autenticação:** Pública (sem chave)
@@ -60,20 +60,23 @@ A UI utiliza `IEnumerable<IBusService>`, permitindo que a aplicação suporte no
 - **Serviço:** `Services/CarrisLisboaService.cs`
 - **DTOs:** `Models/DTOs/CarrisLisboa/`
 
-#### Gerar dados estáticos da Carris Lisboa
+#### Gerar dados estáticos GTFS
 
-O gerador offline descarrega o GTFS configurado, ou aceita um ZIP local, e cria um manifesto mais um ficheiro JSON por número de linha. O formato é versionado (`version: 1`) e inclui sentidos, paragens, viagens, horários e regras de `calendar.txt`/`calendar_dates.txt`.
+O gerador offline aceita um ZIP GTFS local ou um URL explícito e cria um manifesto mais um ficheiro JSON por número de linha. O formato é versionado (`version: 2`) e inclui sentidos, paragens, viagens, horários e regras de `calendar.txt`/`calendar_dates.txt`.
+
+Para um feed remoto, indique o URL explicitamente. O ZIP é temporário e apagado no fim:
 
 ```bash
-dotnet run --project Tools/CarrisLisboaDataGenerator/CarrisLisboaDataGenerator.csproj -- \
+dotnet run --project Tools/GtfsDataGenerator/GtfsDataGenerator.csproj -- \
+  --gtfs-url https://example.org/feed.zip \
   --output wwwroot/data/carris-lisboa
 ```
 
-O comando normal lê `Apis:Carris:GtfsSourceUrl` em `wwwroot/appsettings.json`, descarrega o GTFS para um ficheiro temporário, gera os JSON e apaga o ZIP no fim. Para usar um ZIP já descarregado, indique-o opcionalmente:
+Para usar um ZIP já descarregado:
 
 ```bash
-dotnet run --project Tools/CarrisLisboaDataGenerator/CarrisLisboaDataGenerator.csproj -- \
-  --gtfs /caminho/para/carris-gtfs.zip \
+dotnet run --project Tools/GtfsDataGenerator/GtfsDataGenerator.csproj -- \
+  --gtfs /caminho/para/feed.zip \
   --output wwwroot/data/carris-lisboa
 ```
 
@@ -87,11 +90,13 @@ data/carris-lisboa/
     └── ...
 ```
 
-O manifesto contém a versão do formato, `generatedAtUtc`, `feedHash` e os nomes concretos dos ficheiros de linha. O caminho é configurado em `Apis:Carris:StaticDataBaseUrl` e, por defeito, é `data/carris-lisboa/`.
+O manifesto contém a versão do formato, `generatedAtUtc`, `feedHash` e os nomes concretos dos ficheiros de linha. O caminho usado pela Carris Lisboa é configurado em `Apis:Carris:StaticDataBaseUrl` e, por defeito, é `data/carris-lisboa/`.
+
+O número público da linha é determinado por `route_short_name`. Rotas diferentes com o mesmo valor são agrupadas na mesma linha lógica; um `route_short_name` vazio faz o generator falhar para evitar uma identidade inventada. Nos feeds suportados, `stop_desc` é usado como `GtfsStaticStop.Locality` por convenção do dataset, não por uma regra geral do GTFS.
 
 Em desenvolvimento, gere os ficheiros diretamente em `wwwroot/data/carris-lisboa/` antes de iniciar/publicar a aplicação. Em produção, publique o mesmo diretório num CDN ou alojamento estático e configure `StaticDataBaseUrl` com a URL absoluta, terminada em `/`. O manifesto deve ter cache curto ou revalidação (`no-cache`/ETag); os ficheiros de linha com hash podem ter cache longo e imutável (`public, max-age=31536000, immutable`). Os ficheiros gerados devem ser publicados antes da aplicação.
 
-A aplicação descarrega o manifesto uma vez por sessão e apenas o ficheiro da linha consultada. As chegadas da Carris Lisboa são sempre devolvidas como agendadas (`IsRealTime = false`). O ZIP GTFS e os ficheiros estáticos gerados não devem ser versionados.
+A aplicação descarrega o manifesto uma vez por sessão e apenas o ficheiro da linha consultada. As chegadas da Carris Lisboa são sempre devolvidas como agendadas (`IsRealTime = false`). O ZIP GTFS não deve ser versionado; os JSON estáticos publicados podem ser versionados quando fizerem parte dos dados da aplicação.
 
 ### Transitland 🗺️
 - **URL Base:** `https://transit.land/api/v2/rest/`

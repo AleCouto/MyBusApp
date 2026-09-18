@@ -1,16 +1,14 @@
 using System.Net.Http.Headers;
-using System.Text.Json;
-using MyBusApp.Configuration;
 
-namespace MyBusApp.Tools.CarrisLisboaDataGenerator;
+namespace MyBusApp.Tools.GtfsDataGenerator;
 
-public static class CarrisLisboaDataGeneratorRunner
+public static class GtfsDataGeneratorRunner
 {
-    private const string Usage = "Usage: dotnet run -- --output <directory> [--gtfs <gtfs.zip>]";
+    private const string Usage = "Usage: dotnet run -- --output <directory> (--gtfs <gtfs.zip> | --gtfs-url <url>)";
 
     public static async Task<int> RunAsync(string[] args)
     {
-        if (!TryParseArguments(args, out var outputDirectory, out var localGtfsPath))
+        if (!TryParseArguments(args, out var outputDirectory, out var localGtfsPath, out var gtfsUrl))
         {
             Console.Error.WriteLine(Usage);
             return 2;
@@ -22,10 +20,9 @@ public static class CarrisLisboaDataGeneratorRunner
             var gtfsPath = localGtfsPath;
             if (gtfsPath is null)
             {
-                var sourceUrl = await ReadGtfsSourceUrlAsync();
-                temporaryGtfsPath = Path.Combine(Path.GetTempPath(), $"carris-lisboa-{Guid.NewGuid():N}.zip");
-                Console.WriteLine($"A descarregar GTFS da Carris Lisboa: {sourceUrl}");
-                await DownloadGtfsAsync(sourceUrl, temporaryGtfsPath);
+                temporaryGtfsPath = Path.Combine(Path.GetTempPath(), $"gtfs-{Guid.NewGuid():N}.zip");
+                Console.WriteLine($"A descarregar GTFS: {gtfsUrl}");
+                await DownloadGtfsAsync(gtfsUrl!, temporaryGtfsPath);
                 Console.WriteLine("Download do GTFS concluído.");
                 gtfsPath = temporaryGtfsPath;
             }
@@ -36,8 +33,8 @@ public static class CarrisLisboaDataGeneratorRunner
                 Console.WriteLine($"A usar GTFS local: {gtfsPath}");
             }
 
-            Console.WriteLine("A gerar dados estáticos da Carris Lisboa...");
-            new CarrisLisboaStaticDataGenerator().Generate(gtfsPath, outputDirectory);
+            Console.WriteLine("A gerar dados estáticos GTFS...");
+            new GtfsStaticDataGenerator().Generate(gtfsPath, outputDirectory);
             Console.WriteLine("Geração concluída.");
             return 0;
         }
@@ -62,10 +59,15 @@ public static class CarrisLisboaDataGeneratorRunner
         }
     }
 
-    private static bool TryParseArguments(string[] args, out string outputDirectory, out string? localGtfsPath)
+    private static bool TryParseArguments(
+        string[] args,
+        out string outputDirectory,
+        out string? localGtfsPath,
+        out string? gtfsUrl)
     {
         outputDirectory = string.Empty;
         localGtfsPath = null;
+        gtfsUrl = null;
         for (var index = 0; index < args.Length; index++)
         {
             switch (args[index])
@@ -76,30 +78,19 @@ public static class CarrisLisboaDataGeneratorRunner
                 case "--gtfs" when index + 1 < args.Length && localGtfsPath is null:
                     localGtfsPath = args[++index];
                     break;
+                case "--gtfs-url" when index + 1 < args.Length && gtfsUrl is null:
+                    gtfsUrl = args[++index];
+                    break;
                 default:
                     return false;
             }
         }
 
-        return !string.IsNullOrWhiteSpace(outputDirectory);
-    }
+        if (string.IsNullOrWhiteSpace(outputDirectory) || (localGtfsPath is null) == (gtfsUrl is null))
+            return false;
 
-    private static async Task<string> ReadGtfsSourceUrlAsync()
-    {
-        var settingsPath = FindAppSettingsPath();
-        if (settingsPath is null)
-            throw new InvalidOperationException("Não foi encontrado wwwroot/appsettings.json a partir da raiz do repositório.");
-
-        await using var stream = File.OpenRead(settingsPath);
-        var configuration = await JsonSerializer.DeserializeAsync<GeneratorConfiguration>(stream, new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true
-        });
-        var sourceUrl = configuration?.Apis?.Carris?.GtfsSourceUrl;
-        if (!Uri.TryCreate(sourceUrl, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
-            throw new InvalidOperationException($"Apis:Carris:GtfsSourceUrl ausente ou inválido em '{settingsPath}'.");
-
-        return uri.ToString();
+        return gtfsUrl is null || Uri.TryCreate(gtfsUrl, UriKind.Absolute, out var uri) &&
+            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
     }
 
     private static async Task DownloadGtfsAsync(string sourceUrl, string destinationPath)
@@ -116,21 +107,4 @@ public static class CarrisLisboaDataGeneratorRunner
         await input.CopyToAsync(output);
     }
 
-    private static string? FindAppSettingsPath()
-    {
-        foreach (var startPath in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
-        {
-            var directory = new DirectoryInfo(startPath);
-            while (directory is not null)
-            {
-                var candidate = Path.Combine(directory.FullName, "wwwroot", "appsettings.json");
-                if (File.Exists(candidate)) return candidate;
-                directory = directory.Parent;
-            }
-        }
-
-        return null;
-    }
-
-    private sealed record GeneratorConfiguration(ApiSettings? Apis);
 }

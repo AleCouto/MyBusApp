@@ -28,7 +28,7 @@ public sealed class BusServiceRouter
         foreach (var service in _services)
         {
             _logger.Info(nameof(BusServiceRouter), $"Trying provider {service.Provider} for line '{lineNumber}'.");
-            var line = await service.GetLineAsync(lineNumber);
+            var line = await TryGetLineAsync(service, lineNumber);
             if (line != null)
             {
                 _logger.Info(nameof(BusServiceRouter), $"Provider {service.Provider} resolved line '{lineNumber}' as '{line.Id}'.");
@@ -40,5 +40,47 @@ public sealed class BusServiceRouter
 
         _logger.Warning(nameof(BusServiceRouter), $"No provider found line '{lineNumber}'.");
         return (null, null);
+    }
+
+    public async Task<(BusLine? Line, IBusService? Service)> ResolveLineAsync(
+        BusProvider provider,
+        string lineNumber)
+    {
+        if (string.IsNullOrWhiteSpace(lineNumber))
+            return (null, null);
+
+        var service = _services.FirstOrDefault(item => item.Provider == provider);
+        if (service is null)
+        {
+            _logger.Warning(nameof(BusServiceRouter), $"Provider {provider} is not registered for line '{lineNumber}'.");
+            return (null, null);
+        }
+
+        _logger.Info(nameof(BusServiceRouter), $"Trying explicitly requested provider {provider} for line '{lineNumber}'.");
+        var line = await TryGetLineAsync(service, lineNumber);
+        if (line is null)
+        {
+            _logger.Warning(nameof(BusServiceRouter), $"Provider {provider} did not find line '{lineNumber}'.");
+            return (null, null);
+        }
+
+        _logger.Info(nameof(BusServiceRouter), $"Provider {provider} resolved line '{lineNumber}' as '{line.Id}'.");
+        return (line, service);
+    }
+
+    private async Task<BusLine?> TryGetLineAsync(IBusService service, string lineNumber)
+    {
+        try
+        {
+            return await service.GetLineAsync(lineNumber);
+        }
+        catch (Exception exception)
+        {
+            _logger.Error(
+                nameof(BusServiceRouter),
+                $"Provider {service.Provider} failed while resolving line '{lineNumber}'.",
+                exception);
+            return null;
+        }
     }
 }

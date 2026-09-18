@@ -9,7 +9,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MyBusApp.Tests", "MyBusApp.
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Tools", "Tools", "{07C2787E-EAC7-C090-1BA3-A61EC2A24D84}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CarrisLisboaDataGenerator", "Tools\CarrisLisboaDataGenerator\CarrisLisboaDataGenerator.csproj", "{8A5CAAEE-2D20-4EDC-88D3-B0500F2BA748}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GtfsDataGenerator", "Tools\GtfsDataGenerator\GtfsDataGenerator.csproj", "{8A5CAAEE-2D20-4EDC-88D3-B0500F2BA748}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

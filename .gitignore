@@ -50,9 +50,8 @@ artifacts/
 
 # Carris Lisboa GTFS source and local generator output
 *.gtfs.zip
-wwwroot/data/carris-lisboa/
-Tools/CarrisLisboaDataGenerator/bin/
-Tools/CarrisLisboaDataGenerator/obj/
+Tools/GtfsDataGenerator/bin/
+Tools/GtfsDataGenerator/obj/
 
 ## Build results
 [Dd]ebug/

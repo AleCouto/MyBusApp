@@ -22,5 +22,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\MyBusApp.csproj" />
+    <ProjectReference Include="..\Tools\GtfsDataGenerator\GtfsDataGenerator.csproj" />
   </ItemGroup>
 </Project>

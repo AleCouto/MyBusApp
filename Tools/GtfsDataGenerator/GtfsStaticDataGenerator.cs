@@ -6,11 +6,11 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using MyBusApp.Models.StaticData;
 
-namespace MyBusApp.Tools.CarrisLisboaDataGenerator;
+namespace MyBusApp.Tools.GtfsDataGenerator;
 
-public sealed class CarrisLisboaStaticDataGenerator
+public sealed class GtfsStaticDataGenerator
 {
-    private const int DataVersion = 1;
+    private const int DataVersion = 2;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
@@ -49,8 +49,16 @@ public sealed class CarrisLisboaStaticDataGenerator
 
         ReadStopTimesStreaming(archive, tripsById, buildersByRouteId);
 
-        var manifestLines = new List<CarrisLisboaStaticManifestLine>();
+        var manifestLines = new List<GtfsStaticManifestLine>();
         var feedHash = ComputeFeedHash(gtfsZipPath);
+        var outputNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var builder in builders.Values)
+        {
+            var fileName = $"{SanitizeFileName(builder.Number)}.{feedHash}.json";
+            if (!outputNames.Add(fileName))
+                throw new InvalidDataException($"The line name '{builder.Number}' collides after filename sanitization: '{fileName}'.");
+        }
+
         foreach (var builder in builders.Values.OrderBy(item => item.Number, StringComparer.OrdinalIgnoreCase))
         {
             var stopIds = builder.StopTimes.Select(stopTime => stopTime.StopId).ToHashSet(StringComparer.Ordinal);
@@ -66,31 +74,33 @@ public sealed class CarrisLisboaStaticDataGenerator
                     trip.RouteId,
                     Direction = FirstNonEmpty(trip.DirectionId, trip.Headsign, "unknown")
                 })
-                .Select(group => new CarrisLisboaStaticDirection(
+                .Select(group => new GtfsStaticDirection(
                     $"{group.Key.RouteId}|{group.Key.Direction}",
                     group.Key.RouteId,
                     FirstNonEmpty(routesById[group.Key.RouteId].LongName, group.First().Headsign, group.Key.Direction)))
                 .OrderBy(direction => direction.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            var line = new CarrisLisboaStaticLine(
+            var line = new GtfsStaticLine(
                 DataVersion,
                 builder.Number,
                 FirstNonEmpty(builder.Routes[0].LongName, builder.Number),
                 directions,
-                lineStops.Select(stop => new CarrisLisboaStaticStop(stop.Id, stop.Name, stop.Locality)).ToList(),
-                builder.Trips.Select(trip => new CarrisLisboaStaticTrip(
+                // stop_desc is used as Locality by convention in the supported feeds.
+                lineStops.Select(stop => new GtfsStaticStop(stop.Id, stop.Name, stop.Locality)).ToList(),
+                builder.Trips.Select(trip => new GtfsStaticTrip(
                     trip.Id,
                     trip.RouteId,
                     trip.ServiceId,
                     FirstNonEmpty(trip.DirectionId, trip.Headsign, "unknown"),
                     FirstNonEmpty(trip.Headsign, routesById[trip.RouteId].LongName, builder.Number))).ToList(),
-                builder.StopTimes.Select(stopTime => new CarrisLisboaStaticStopTime(
+                builder.StopTimes.Select(stopTime => new GtfsStaticStopTime(
                     stopTime.TripId,
                     stopTime.StopId,
-                    stopTime.TimeSeconds,
+                    stopTime.ArrivalTimeSeconds,
+                    stopTime.DepartureTimeSeconds,
                     stopTime.Sequence)).ToList(),
-                lineCalendars.Select(calendar => new CarrisLisboaStaticCalendar(
+                lineCalendars.Select(calendar => new GtfsStaticCalendar(
                     calendar.ServiceId,
                     calendar.StartDate,
                     calendar.EndDate,
@@ -101,7 +111,7 @@ public sealed class CarrisLisboaStaticDataGenerator
                     calendar.Friday,
                     calendar.Saturday,
                     calendar.Sunday)).ToList(),
-                lineCalendarDates.Select(date => new CarrisLisboaStaticCalendarDate(
+                lineCalendarDates.Select(date => new GtfsStaticCalendarDate(
                     date.ServiceId,
                     date.Date,
                     date.ExceptionType)).ToList());
@@ -109,10 +119,10 @@ public sealed class CarrisLisboaStaticDataGenerator
             var fileName = $"{SanitizeFileName(builder.Number)}.{feedHash}.json";
             var relativeFile = $"lines/{fileName}";
             File.WriteAllText(Path.Combine(linesDirectory, fileName), JsonSerializer.Serialize(line, JsonOptions));
-            manifestLines.Add(new CarrisLisboaStaticManifestLine(builder.Number, relativeFile, line.Name));
+            manifestLines.Add(new GtfsStaticManifestLine(builder.Number, relativeFile, line.Name));
         }
 
-        var manifest = new CarrisLisboaStaticManifest(
+        var manifest = new GtfsStaticManifest(
             DataVersion,
             manifestLines,
             DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture),
@@ -124,10 +134,18 @@ public sealed class CarrisLisboaStaticDataGenerator
     private static List<GtfsRoute> ReadRoutes(ZipArchive archive)
     {
         var rows = ReadTable(archive, "routes.txt");
-        return rows.Select(row => new GtfsRoute(
-                Required(row, "route_id", "routes.txt"),
-                Required(row, "route_short_name", "routes.txt"),
-                Get(row, "route_long_name") ?? Get(row, "route_short_name") ?? string.Empty))
+        return rows.Select(row =>
+            {
+                var routeId = Required(row, "route_id", "routes.txt");
+                var shortName = Get(row, "route_short_name");
+                if (string.IsNullOrWhiteSpace(shortName))
+                    throw new InvalidDataException($"GTFS route '{routeId}' has no route_short_name; a public line identity cannot be determined safely.");
+
+                return new GtfsRoute(
+                    routeId,
+                    shortName,
+                    Get(row, "route_long_name") ?? shortName);
+            })
             .ToList();
     }
 
@@ -169,6 +187,7 @@ public sealed class CarrisLisboaStaticDataGenerator
         var tripIndex = RequiredIndex(headers, "trip_id", "stop_times.txt");
         var stopIndex = RequiredIndex(headers, "stop_id", "stop_times.txt");
         var arrivalIndex = RequiredIndex(headers, "arrival_time", "stop_times.txt");
+        var departureIndex = RequiredIndex(headers, "departure_time", "stop_times.txt");
         var sequenceIndex = RequiredIndex(headers, "stop_sequence", "stop_times.txt");
 
         while (reader.ReadLine() is { } line)
@@ -178,13 +197,14 @@ public sealed class CarrisLisboaStaticDataGenerator
                 !buildersByRouteId.TryGetValue(trip.RouteId, out var builder))
                 continue;
 
-            if (stopIndex >= values.Count || arrivalIndex >= values.Count || sequenceIndex >= values.Count)
+            if (stopIndex >= values.Count || arrivalIndex >= values.Count || departureIndex >= values.Count || sequenceIndex >= values.Count)
                 throw new InvalidDataException("GTFS file 'stop_times.txt' has an incomplete row.");
 
             builder.StopTimes.Add(new GtfsStopTime(
                 trip.Id,
                 values[stopIndex],
                 ParseGtfsTime(values[arrivalIndex]),
+                ParseGtfsTime(values[departureIndex]),
                 ParseInteger(values[sequenceIndex], "stop_sequence")));
         }
     }
@@ -332,7 +352,12 @@ public sealed class CarrisLisboaStaticDataGenerator
     private sealed record GtfsRoute(string Id, string ShortName, string LongName);
     private sealed record GtfsTrip(string Id, string RouteId, string ServiceId, string DirectionId, string Headsign);
     private sealed record GtfsStop(string Id, string Name, string Locality);
-    private readonly record struct GtfsStopTime(string TripId, string StopId, int TimeSeconds, int Sequence);
+    private readonly record struct GtfsStopTime(
+        string TripId,
+        string StopId,
+        int ArrivalTimeSeconds,
+        int DepartureTimeSeconds,
+        int Sequence);
     private sealed record GtfsCalendar(string ServiceId, string StartDate, string EndDate, bool Monday, bool Tuesday, bool Wednesday, bool Thursday, bool Friday, bool Saturday, bool Sunday);
     private sealed record GtfsCalendarDate(string ServiceId, string Date, int ExceptionType);
 

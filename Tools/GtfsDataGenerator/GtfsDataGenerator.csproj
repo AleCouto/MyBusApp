@@ -7,7 +7,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="../../Configuration/Configuration.cs" Link="Configuration/Configuration.cs" />
-    <Compile Include="../../Models/StaticData/CarrisLisboaStaticData.cs" Link="Models/StaticData/CarrisLisboaStaticData.cs" />
+    <ProjectReference Include="../../MyBusApp.csproj" />
   </ItemGroup>
 </Project>
