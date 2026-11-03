@@ -49,6 +49,40 @@ public sealed class FavoriteStore(IJSRuntime jsRuntime)
         return true;
     }
 
+    public async Task<bool> IsFavoriteAsync(TransitFavorite favorite)
+    {
+        ArgumentNullException.ThrowIfNull(favorite);
+        var favorites = await LoadAsync();
+        return favorites.Any(existing => IsSameFavorite(existing, favorite));
+    }
+
+    public async Task<bool> SetFavoriteAsync(TransitFavorite favorite, bool isFavorite)
+    {
+        ArgumentNullException.ThrowIfNull(favorite);
+        if (!IsValid(favorite))
+            throw new ArgumentException("The favorite is invalid.", nameof(favorite));
+
+        var favorites = await LoadAsync();
+        var index = favorites.FindIndex(existing => IsSameFavorite(existing, favorite));
+        if (isFavorite)
+        {
+            if (index >= 0)
+                return true;
+
+            favorites.Add(favorite);
+        }
+        else
+        {
+            if (index < 0)
+                return false;
+
+            favorites.RemoveAt(index);
+        }
+
+        await SaveAsync(favorites);
+        return isFavorite;
+    }
+
     private static bool IsValid(TransitFavorite favorite)
     {
         if (favorite is null ||

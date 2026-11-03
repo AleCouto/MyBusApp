@@ -25,10 +25,25 @@ public sealed class BusServiceRouter
             return (null, null);
         }
 
+        Exception? lastFailure = null;
         foreach (var service in _services)
         {
             _logger.Info(nameof(BusServiceRouter), $"Trying provider {service.Provider} for line '{lineNumber}'.");
-            var line = await TryGetLineAsync(service, lineNumber);
+            BusLine? line;
+            try
+            {
+                line = await service.GetLineAsync(lineNumber);
+            }
+            catch (Exception exception)
+            {
+                _logger.Error(
+                    nameof(BusServiceRouter),
+                    $"Provider {service.Provider} failed while resolving line '{lineNumber}'.",
+                    exception);
+                lastFailure = exception;
+                continue;
+            }
+
             if (line != null)
             {
                 _logger.Info(nameof(BusServiceRouter), $"Provider {service.Provider} resolved line '{lineNumber}' as '{line.Id}'.");
@@ -37,6 +52,9 @@ public sealed class BusServiceRouter
 
             _logger.Warning(nameof(BusServiceRouter), $"Provider {service.Provider} did not find line '{lineNumber}'. Trying next provider.");
         }
+
+        if (lastFailure is not null)
+            throw lastFailure;
 
         _logger.Warning(nameof(BusServiceRouter), $"No provider found line '{lineNumber}'.");
         return (null, null);
@@ -57,7 +75,7 @@ public sealed class BusServiceRouter
         }
 
         _logger.Info(nameof(BusServiceRouter), $"Trying explicitly requested provider {provider} for line '{lineNumber}'.");
-        var line = await TryGetLineAsync(service, lineNumber);
+        var line = await service.GetLineAsync(lineNumber);
         if (line is null)
         {
             _logger.Warning(nameof(BusServiceRouter), $"Provider {provider} did not find line '{lineNumber}'.");

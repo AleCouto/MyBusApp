@@ -84,7 +84,7 @@ namespace MyBusApp.Tests
         }
 
         [Fact]
-        public async Task GetLineAsync_ReturnsNull_WhenHtmlResponseIsReturned()
+        public async Task GetLineAsync_ReportsHtmlResponseAsInvalidData()
         {
             var html = "<!DOCTYPE html><html><body>App shell</body></html>";
             var handler = new FakeHandler(req =>
@@ -101,9 +101,48 @@ namespace MyBusApp.Tests
             settings.Transitland.ApiKey = "FAKE";
 
             var svc = new TransitlandService(settings, http);
-            var line = await svc.GetLineAsync("714");
+            await Assert.ThrowsAsync<InvalidDataException>(() => svc.GetLineAsync("714"));
+        }
+
+        [Fact]
+        public async Task GetLineAsync_ReturnsNullForSuccessfulEmptyResponse()
+        {
+            var handler = new FakeHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"routes":[]}""", Encoding.UTF8, "application/json")
+            });
+            var settings = new ApiSettings();
+            settings.Transitland.BaseUrl = "https://transit.land/api/v2/rest/";
+            var service = new TransitlandService(settings, new HttpClient(handler));
+
+            var line = await service.GetLineAsync("714");
 
             Assert.Null(line);
+        }
+
+        [Fact]
+        public async Task GetLineAsync_ReportsHttpFailureAsUnavailable()
+        {
+            var handler = new FakeHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+            var settings = new ApiSettings();
+            settings.Transitland.BaseUrl = "https://transit.land/api/v2/rest/";
+            var service = new TransitlandService(settings, new HttpClient(handler));
+
+            await Assert.ThrowsAsync<TransitSourceUnavailableException>(() => service.GetLineAsync("714"));
+        }
+
+        [Fact]
+        public async Task GetLineAsync_ReportsMalformedJsonAsInvalidData()
+        {
+            var handler = new FakeHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{invalid json", Encoding.UTF8, "application/json")
+            });
+            var settings = new ApiSettings();
+            settings.Transitland.BaseUrl = "https://transit.land/api/v2/rest/";
+            var service = new TransitlandService(settings, new HttpClient(handler));
+
+            await Assert.ThrowsAsync<InvalidDataException>(() => service.GetLineAsync("714"));
         }
     }
 }

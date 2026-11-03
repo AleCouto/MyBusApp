@@ -205,83 +205,91 @@ public class CarrisMetropolitanaService : IBusService
     private async Task<List<Line>> GetLinesFromApiAsync()
     {
         const string endpoint = "lines";
-        try
-        {
-            _logger.ApiRequest(nameof(CarrisMetropolitanaService), _http.BaseAddress, endpoint);
-            var response = await _http.GetAsync(endpoint);
-            var json = await response.Content.ReadAsStringAsync();
-            _logger.ApiResponse(nameof(CarrisMetropolitanaService), endpoint, response.StatusCode, json.Length);
-            if (string.IsNullOrWhiteSpace(json) || json == "[]") return [];
-            return JsonSerializer.Deserialize<List<Line>>(json, _options) ?? [];
-        } 
-        catch (Exception exception) { _logger.Error(nameof(CarrisMetropolitanaService), $"Failed API request: {endpoint}", exception); return []; }
+        var json = await GetResponseContentAsync(endpoint);
+        return DeserializeList<Line>(json, endpoint);
     }
 
     private async Task<List<Route>> GetRoutesFromApiAsync()
     {
         const string endpoint = "routes";
-        try
-        {
-            _logger.ApiRequest(nameof(CarrisMetropolitanaService), _http.BaseAddress, endpoint);
-            var response = await _http.GetAsync(endpoint);
-            var json = await response.Content.ReadAsStringAsync();
-            _logger.ApiResponse(nameof(CarrisMetropolitanaService), endpoint, response.StatusCode, json.Length);
-            if (string.IsNullOrWhiteSpace(json) || json == "[]") return [];       
-            return JsonSerializer.Deserialize<List<Route>>(json, _options) ?? [];
-        } 
-        catch (Exception exception) { _logger.Error(nameof(CarrisMetropolitanaService), $"Failed API request: {endpoint}", exception); return []; }
+        var json = await GetResponseContentAsync(endpoint);
+        return DeserializeList<Route>(json, endpoint);
     }
 
     private async Task<List<Stop>> GetStopsFromApiAsync()
     {
         const string endpoint = "stops";
-        try
-        {
-            _logger.ApiRequest(nameof(CarrisMetropolitanaService), _http.BaseAddress, endpoint);
-            var response = await _http.GetAsync(endpoint);
-            var json = await response.Content.ReadAsStringAsync();
-            _logger.ApiResponse(nameof(CarrisMetropolitanaService), endpoint, response.StatusCode, json.Length);
-            if (string.IsNullOrWhiteSpace(json) || json == "[]") return [];           
-            return JsonSerializer.Deserialize<List<Stop>>(json, _options) ?? [];
-        } 
-        catch (Exception exception) { _logger.Error(nameof(CarrisMetropolitanaService), $"Failed API request: {endpoint}", exception); return []; }
+        var json = await GetResponseContentAsync(endpoint);
+        return DeserializeList<Stop>(json, endpoint);
     }
 
     private async Task<Pattern?> GetPatternFromApiAsync(string patternId)
     {
         var endpoint = $"patterns/{patternId}";
-        try
-        {
-            _logger.ApiRequest(nameof(CarrisMetropolitanaService), _http.BaseAddress, endpoint);
-            var response = await _http.GetAsync(endpoint);
-            var json = await response.Content.ReadAsStringAsync();
-            _logger.ApiResponse(nameof(CarrisMetropolitanaService), endpoint, response.StatusCode, json.Length);
-            if (string.IsNullOrWhiteSpace(json) || json == "[]" || json == "null") return null;
-            // Lemos como lista porque a API manda []
-            var list = JsonSerializer.Deserialize<List<Pattern>>(json, _options);
-            // Tiramos o primeiro objeto da lista e devolvemos só ele
-            return list?.FirstOrDefault(p => p.Id == patternId);
-        } 
-        catch (Exception exception) { _logger.Error(nameof(CarrisMetropolitanaService), $"Failed API request: {endpoint}", exception); return null; }
+        var json = await GetResponseContentAsync(endpoint);
+        if (string.IsNullOrWhiteSpace(json) || json.Trim() == "[]" || json.Trim() == "null")
+            return null;
+
+        var list = JsonSerializer.Deserialize<List<Pattern>>(json, _options)
+            ?? throw new InvalidDataException($"The API returned an invalid pattern payload for '{endpoint}'.");
+        return list.FirstOrDefault(pattern => pattern.Id == patternId);
     }
 
     private async Task<List<Arrival>> GetArrivalsFromApiAsync(string stopId)
     {
         var endpoint = $"arrivals/by_stop/{stopId}";
+        var json = await GetResponseContentAsync(endpoint);
+        return DeserializeList<Arrival>(json, endpoint);
+    }
+
+    private async Task<string> GetResponseContentAsync(string endpoint)
+    {
+        _logger.ApiRequest(nameof(CarrisMetropolitanaService), _http.BaseAddress, endpoint);
+        HttpResponseMessage response;
         try
         {
-            _logger.ApiRequest(nameof(CarrisMetropolitanaService), _http.BaseAddress, endpoint);
-            var response = await _http.GetAsync(endpoint);
-            var json = await response.Content.ReadAsStringAsync();
-            _logger.ApiResponse(nameof(CarrisMetropolitanaService), endpoint, response.StatusCode, json.Length);
+            response = await _http.GetAsync(endpoint);
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException)
+        {
+            _logger.Error(nameof(CarrisMetropolitanaService), $"Failed API request: {endpoint}", exception);
+            throw new TransitSourceUnavailableException(
+                $"Carris Metropolitana is unavailable while requesting '{endpoint}'.",
+                exception);
+        }
+
+        using (response)
+        {
             if (!response.IsSuccessStatusCode)
             {
-                _logger.Warning(nameof(CarrisMetropolitanaService), $"No arrivals available for stop '{stopId}'. HTTP {(int)response.StatusCode}.");
-                return [];
+                _logger.Warning(nameof(CarrisMetropolitanaService), $"API request failed: {endpoint} -> {(int)response.StatusCode}.");
+                throw new TransitSourceUnavailableException(
+                    $"Carris Metropolitana returned HTTP {(int)response.StatusCode} for '{endpoint}'.");
             }
-            if (string.IsNullOrWhiteSpace(json) || json == "[]") return [];          
-            return JsonSerializer.Deserialize<List<Arrival>>(json, _options) ?? [];
-        } 
-        catch (Exception exception) { _logger.Error(nameof(CarrisMetropolitanaService), $"Failed API request: {endpoint}", exception); return []; }
+
+            string json;
+            try
+            {
+                json = await response.Content.ReadAsStringAsync();
+            }
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException)
+            {
+                _logger.Error(nameof(CarrisMetropolitanaService), $"Failed API request: {endpoint}", exception);
+                throw new TransitSourceUnavailableException(
+                    $"Carris Metropolitana is unavailable while reading '{endpoint}'.",
+                    exception);
+            }
+            _logger.ApiResponse(nameof(CarrisMetropolitanaService), endpoint, response.StatusCode, json.Length);
+            return json;
+        }
+    }
+
+    private List<T> DeserializeList<T>(string json, string endpoint)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return [];
+
+        return JsonSerializer.Deserialize<List<T>>(json, _options)
+            ?? throw new InvalidDataException($"The API returned an invalid list payload for '{endpoint}'.");
     }
 }

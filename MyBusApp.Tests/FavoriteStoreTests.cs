@@ -56,6 +56,36 @@ public sealed class FavoriteStoreTests
     }
 
     [Fact]
+    public async Task SetFavoriteAsync_TogglesTheMatchingFavoriteWithoutChangingOtherContexts()
+    {
+        var jsRuntime = new MemoryJsRuntime();
+        var store = new FavoriteStore(jsRuntime);
+        var busFavorite = new TransitFavorite(
+            FavoriteTransportMode.Bus,
+            FavoriteProvider.Metropolitana,
+            "shared-stop",
+            "Paragem",
+            "4725");
+        var otherBusFavorite = busFavorite with { LineNumber = "3710" };
+        var trainFavorite = new TransitFavorite(
+            FavoriteTransportMode.Train,
+            FavoriteProvider.Cp,
+            "station-1",
+            "Estação");
+        await store.SaveAsync([otherBusFavorite, trainFavorite]);
+
+        Assert.False(await store.IsFavoriteAsync(busFavorite));
+        Assert.True(await store.SetFavoriteAsync(busFavorite, true));
+        Assert.True(await store.IsFavoriteAsync(busFavorite));
+        Assert.True(await store.SetFavoriteAsync(busFavorite, true));
+        Assert.Equal([otherBusFavorite, trainFavorite, busFavorite], await store.LoadAsync());
+
+        Assert.False(await store.SetFavoriteAsync(busFavorite, false));
+        Assert.False(await store.IsFavoriteAsync(busFavorite));
+        Assert.Equal([otherBusFavorite, trainFavorite], await store.LoadAsync());
+    }
+
+    [Fact]
     public async Task LoadAsync_RejectsMalformedSavedFavorites()
     {
         var jsRuntime = new MemoryJsRuntime { StoredValue = "null" };

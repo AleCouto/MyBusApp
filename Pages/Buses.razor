@@ -8,7 +8,7 @@
 <div class="container mt-4 d-flex flex-column align-items-center">
     <div class="row border-bottom pb-3 mb-4 w-100">
         <div class="col text-center">
-            <h1 class="display-5">Autocarros</h1>
+            <h1 class="display-5"><span aria-hidden="true">🚌</span> Autocarros</h1>
             <p class="text-muted">Consulte linhas, paragens e próximas passagens.</p>
         </div>
     </div>
@@ -40,6 +40,14 @@
         <div class="row w-100 justify-content-center">
             <div class="col-12 col-md-8 col-lg-6">
                 <div class="alert alert-info" role="status">@favoriteMessage</div>
+            </div>
+        </div>
+    }
+    @if (!string.IsNullOrWhiteSpace(queryMessage))
+    {
+        <div class="row w-100 justify-content-center">
+            <div class="col-12 col-md-8 col-lg-6">
+                <div class="alert alert-warning" role="alert">@queryMessage</div>
             </div>
         </div>
     }
@@ -105,12 +113,11 @@
                             <h4 class="mb-0">@selectedBusStop.Name</h4>
                             <small class="opacity-75">Próximas passagens</small>
                         </div>
-                        <div class="d-flex gap-2">
-                            <button class="btn btn-sm btn-light"
-                                    @onclick="AddBusFavoriteAsync"
-                                    aria-label="Guardar linha e paragem nos favoritos">
-                                <i class="bi bi-heart me-1" aria-hidden="true"></i>Guardar
-                            </button>
+                        <div class="d-flex align-items-center gap-2">
+                            <MyBusApp.Components.FavoriteStar ItemName="@selectedBusStop.Name"
+                                                              IsFavorite="@isBusFavorite"
+                                                              Disabled="@(!isBusFavoriteStateLoaded || isUpdatingBusFavorite)"
+                                                              OnClick="ToggleBusFavoriteAsync" />
                             <button class="btn btn-sm btn-light"
                                     @onclick="RefreshBusArrivalsAsync"
                                     aria-label="Atualizar chegadas">
@@ -166,21 +173,42 @@
     private bool isFilteringBusStops;
     private bool isLoadingBusArrivals;
     private bool hasSearchedBus;
+    private bool isBusFavorite;
+    private bool isBusFavoriteStateLoaded;
+    private bool isUpdatingBusFavorite;
     private string? favoriteMessage;
+    private string? queryMessage;
 
     private async Task SearchBusAsync()
     {
         if (string.IsNullOrWhiteSpace(lineNumber)) return;
         favoriteMessage = null;
+        queryMessage = null;
         isLoadingBus = true;
         ResetBusSearch();
         hasSearchedBus = true;
-        var resolved = await BusServiceRouter.ResolveLineAsync(lineNumber);
-        currentLine = resolved.Line;
-        activeBusService = resolved.Service;
-        if (currentLine is not null && activeBusService is not null)
-            busDirections = await activeBusService.GetDirectionsAsync(currentLine.Id);
-        isLoadingBus = false;
+        try
+        {
+            var resolved = await BusServiceRouter.ResolveLineAsync(lineNumber);
+            currentLine = resolved.Line;
+            activeBusService = resolved.Service;
+            if (currentLine is not null && activeBusService is not null)
+                busDirections = await activeBusService.GetDirectionsAsync(currentLine.Id);
+        }
+        catch (TransitSourceUnavailableException exception)
+        {
+            Logger.Warning(nameof(Buses), $"Bus source unavailable: {exception.Message}");
+            queryMessage = "O serviço de autocarros está temporariamente indisponível.";
+        }
+        catch (Exception exception)
+        {
+            Logger.Error(nameof(Buses), "Failed to search for a bus line.", exception);
+            queryMessage = "Ocorreu um erro ao pesquisar esta linha.";
+        }
+        finally
+        {
+            isLoadingBus = false;
+        }
     }
 
     private async Task OnBusDirectionSelectedAsync(ChangeEventArgs args)
@@ -191,28 +219,68 @@
         var directionId = args.Value?.ToString();
         if (string.IsNullOrEmpty(directionId) || currentLine is null || activeBusService is null) return;
         isFilteringBusStops = true;
-        busStops = await activeBusService.GetStopsAsync(directionId, currentLine.Id);
-        isFilteringBusStops = false;
+        queryMessage = null;
+        try
+        {
+            busStops = await activeBusService.GetStopsAsync(directionId, currentLine.Id);
+        }
+        catch (TransitSourceUnavailableException exception)
+        {
+            Logger.Warning(nameof(Buses), $"Bus source unavailable: {exception.Message}");
+            queryMessage = "O serviço de autocarros está temporariamente indisponível.";
+        }
+        catch (Exception exception)
+        {
+            Logger.Error(nameof(Buses), "Failed to load bus stops.", exception);
+            queryMessage = "Ocorreu um erro ao carregar as paragens.";
+        }
+        finally
+        {
+            isFilteringBusStops = false;
+        }
     }
 
     private async Task OnBusStopSelectedAsync(ChangeEventArgs args)
     {
         selectedBusStop = busStops.FirstOrDefault(stop => stop.Id == args.Value?.ToString());
-        if (selectedBusStop is not null) await RefreshBusArrivalsAsync();
+        isBusFavoriteStateLoaded = false;
+        favoriteMessage = null;
+        if (selectedBusStop is null)
+            return;
+
+        await LoadBusFavoriteStateAsync();
+        await RefreshBusArrivalsAsync();
     }
 
     private async Task RefreshBusArrivalsAsync()
     {
         if (selectedBusStop is null || currentLine is null || activeBusService is null) return;
         isLoadingBusArrivals = true;
-        busArrivals = await activeBusService.GetArrivalsAsync(selectedBusStop.Id, currentLine.Id);
-        isLoadingBusArrivals = false;
+        queryMessage = null;
+        try
+        {
+            busArrivals = await activeBusService.GetArrivalsAsync(selectedBusStop.Id, currentLine.Id);
+        }
+        catch (TransitSourceUnavailableException exception)
+        {
+            Logger.Warning(nameof(Buses), $"Bus source unavailable: {exception.Message}");
+            queryMessage = "O serviço de autocarros está temporariamente indisponível.";
+        }
+        catch (Exception exception)
+        {
+            Logger.Error(nameof(Buses), "Failed to load bus arrivals.", exception);
+            queryMessage = "Ocorreu um erro ao consultar as próximas passagens.";
+        }
+        finally
+        {
+            isLoadingBusArrivals = false;
+        }
     }
 
-    private async Task AddBusFavoriteAsync()
+    private TransitFavorite? GetSelectedBusFavorite()
     {
         if (currentLine is null || selectedBusStop is null)
-            return;
+            return null;
 
         var provider = currentLine.Provider switch
         {
@@ -222,36 +290,73 @@
             _ => (FavoriteProvider?)null
         };
         if (provider is null)
-            return;
+            return null;
 
-        await SaveFavoriteAsync(new TransitFavorite(
+        return new TransitFavorite(
             FavoriteTransportMode.Bus,
             provider.Value,
             selectedBusStop.Id,
             selectedBusStop.Name,
-            currentLine.ShortName));
+            currentLine.ShortName);
     }
 
-    private async Task SaveFavoriteAsync(TransitFavorite favorite)
+    private async Task LoadBusFavoriteStateAsync()
     {
         try
         {
-            favoriteMessage = await FavoriteStore.AddAsync(favorite)
-                ? "Favorito guardado. Consulte-o na página Favoritos."
-                : "Este favorito já está guardado.";
+            var favorite = GetSelectedBusFavorite();
+            if (favorite is null)
+                return;
+
+            isBusFavorite = await FavoriteStore.IsFavoriteAsync(favorite);
+            isBusFavoriteStateLoaded = true;
         }
         catch (Exception exception) when (exception is JSException or System.Text.Json.JsonException or InvalidDataException)
         {
-            Logger.Error(nameof(Buses), "Failed to save a bus favorite.", exception);
-            favoriteMessage = "Não foi possível guardar o favorito neste browser.";
+            Logger.Error(nameof(Buses), "Failed to read the bus favorite state.", exception);
+            favoriteMessage = "Não foi possível consultar os favoritos neste browser.";
+        }
+    }
+
+    private async Task ToggleBusFavoriteAsync()
+    {
+        var favorite = GetSelectedBusFavorite();
+        if (favorite is null || !isBusFavoriteStateLoaded || isUpdatingBusFavorite)
+            return;
+
+        var previousState = isBusFavorite;
+        var requestedState = !previousState;
+        isBusFavorite = requestedState;
+        isUpdatingBusFavorite = true;
+        favoriteMessage = null;
+        try
+        {
+            isBusFavorite = await FavoriteStore.SetFavoriteAsync(favorite, requestedState);
+            favoriteMessage = isBusFavorite
+                ? "Favorito guardado."
+                : "Favorito removido.";
+        }
+        catch (Exception exception) when (exception is JSException or System.Text.Json.JsonException or InvalidDataException or ArgumentException)
+        {
+            isBusFavorite = previousState;
+            Logger.Error(nameof(Buses), "Failed to update the bus favorite.", exception);
+            favoriteMessage = "Não foi possível atualizar o favorito neste browser.";
+        }
+        finally
+        {
+            isUpdatingBusFavorite = false;
         }
     }
 
     private void ResetBusSearch()
     {
+        queryMessage = null;
         currentLine = null;
         activeBusService = null;
         selectedBusStop = null;
+        isBusFavorite = false;
+        isBusFavoriteStateLoaded = false;
+        isUpdatingBusFavorite = false;
         busDirections.Clear();
         busStops.Clear();
         busArrivals.Clear();

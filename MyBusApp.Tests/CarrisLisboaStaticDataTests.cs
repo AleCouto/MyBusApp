@@ -54,7 +54,7 @@ public class CarrisLisboaStaticDataTests
     }
 
     [Fact]
-    public async Task GetLineAsync_RejectsOldStopTimeSchema()
+    public async Task GetLineAsync_ReportsOldStopTimeSchema()
     {
         var oldLineJson = """
             {"version":2,"number":"714","name":"Old schema","directions":[],"stops":[],"trips":[],"stopTimes":[{"tripId":"trip-1","stopId":"stop-1","timeSeconds":3600,"sequence":1}],"calendar":[],"calendarDates":[]}
@@ -67,7 +67,37 @@ public class CarrisLisboaStaticDataTests
             });
         var service = CreateService(handler);
 
-        Assert.Null(await service.GetLineAsync("714"));
+        await Assert.ThrowsAsync<InvalidDataException>(() => service.GetLineAsync("714"));
+    }
+
+    [Fact]
+    public async Task GetArrivalsAsync_ReturnsEmptyWhenSuccessfulQueryHasNoMatchingStopTimes()
+    {
+        var line = CreateLine();
+        var handler = new FakeHandler(request => request.RequestUri!.AbsolutePath.EndsWith("manifest.json", StringComparison.Ordinal)
+            ? JsonResponse(new GtfsStaticManifest(2, [new("714", "lines/714.json", line.Name)]))
+            : JsonResponse(line));
+        var service = CreateService(handler);
+
+        var arrivals = await service.GetArrivalsAsync("missing-stop", "714");
+
+        Assert.Empty(arrivals);
+    }
+
+    [Fact]
+    public async Task GetStationsAsync_ReportsHttpFailureAsUnavailable()
+    {
+        var service = CreateService(new FakeHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)));
+
+        await Assert.ThrowsAsync<TransitSourceUnavailableException>(() => service.GetLineAsync("714"));
+    }
+
+    [Fact]
+    public async Task GetStationsAsync_ReportsNetworkFailureAsUnavailable()
+    {
+        var service = CreateService(new FakeHandler(_ => throw new HttpRequestException("network failure")));
+
+        await Assert.ThrowsAsync<TransitSourceUnavailableException>(() => service.GetLineAsync("714"));
     }
 
     [Fact]

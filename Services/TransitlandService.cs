@@ -54,32 +54,24 @@ public class TransitlandService : IBusService
 
     public async Task<BusLine?> GetLineAsync(string lineNumber)
     {
-        try
-        {
-            var routes = await SearchRoutesAsync(lineNumber);
-            var route = routes.FirstOrDefault(r => MatchesLineNumber(r, lineNumber));
+        var routes = await SearchRoutesAsync(lineNumber);
+        var route = routes.FirstOrDefault(r => MatchesLineNumber(r, lineNumber));
 
-            if (route == null) return null;
+        if (route == null) return null;
 
-            var displayName = !string.IsNullOrWhiteSpace(route.RouteShortName)
-                ? route.RouteShortName
-                : route.RouteNumber ?? route.Id;
-            var routeId = route.OnestopId ?? route.Id ?? lineNumber;
-            var shortName = displayName ?? lineNumber;
-            var longName = route.Name ?? route.LongName ?? shortName;
+        var displayName = !string.IsNullOrWhiteSpace(route.RouteShortName)
+            ? route.RouteShortName
+            : route.RouteNumber ?? route.Id;
+        var routeId = route.OnestopId ?? route.Id ?? lineNumber;
+        var shortName = displayName ?? lineNumber;
+        var longName = route.Name ?? route.LongName ?? shortName;
 
-            return new BusLine(
-                routeId,
-                shortName,
-                longName,
-                "#007bff",
-                Provider);
-        }
-        catch (Exception exception)
-        {
-            _logger.Error(nameof(TransitlandService), $"Failed to resolve line '{lineNumber}'.", exception);
-            return null;
-        }
+        return new BusLine(
+            routeId,
+            shortName,
+            longName,
+            "#007bff",
+            Provider);
     }
 
     public async Task<List<BusDirection>> GetDirectionsAsync(string lineId)
@@ -124,49 +116,51 @@ public class TransitlandService : IBusService
 
     public async Task<List<BusArrival>> GetArrivalsAsync(string stopId, string lineId)
     {
-        try
+        // Hora local de Lisboa — não UTC
+        var lisboaZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Lisbon");
+        var nowLocal = TimeZoneInfo.ConvertTime(DateTime.UtcNow, lisboaZone);
+        var today = nowLocal.ToString("yyyy-MM-dd");
+        var nowTime = nowLocal.TimeOfDay;
+    
+        // Garantir que usamos um route_onestop_id (onestop id) — se o caller passou um short name, resolver
+        var routeOnestopId = lineId;
+        if (string.IsNullOrWhiteSpace(routeOnestopId) || !routeOnestopId.StartsWith("r-", StringComparison.OrdinalIgnoreCase))
         {
-            // Hora local de Lisboa — não UTC
-            var lisboaZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Lisbon");
-            var nowLocal = TimeZoneInfo.ConvertTime(DateTime.UtcNow, lisboaZone);
-            var today = nowLocal.ToString("yyyy-MM-dd");
-            var nowTime = nowLocal.TimeOfDay;
-    
-            // Garantir que usamos um route_onestop_id (onestop id) — se o caller passou um short name, resolver
-            var routeOnestopId = lineId;
-            if (string.IsNullOrWhiteSpace(routeOnestopId) || !routeOnestopId.StartsWith("r-", StringComparison.OrdinalIgnoreCase))
-            {
-                var resolved = await GetRouteByNumberAsync(lineId);
-                routeOnestopId = resolved?.OnestopId ?? resolved?.Id ?? lineId;
-            }
-
-            var schedules = await GetTransitlandListAsync<TransitlandSchedule>(
-                $"schedules?stop_onestop_id={Uri.EscapeDataString(stopId)}" +
-                $"&route_onestop_id={Uri.EscapeDataString(routeOnestopId)}" +
-                $"&date={today}&per_page=200",
-                "schedules");
-    
-            if (!schedules.Any()) return new List<BusArrival>();
-    
-            // Obter o shortName uma vez, fora do loop
-            var route = await GetRouteByNumberAsync(lineId);
-            var shortName = route?.RouteNumber ?? route?.Name ?? lineId;
-    
-            return schedules
-                .Select(s => {
-                    var timeStr = s.ArrivalTime ?? s.DepartureTime;
-                    if (string.IsNullOrEmpty(timeStr)) return null;
-                    // Horários GTFS podem ter >24h (ex: "25:10:00" = 1:10 do dia seguinte)
-                    if (!TryParseGtfsTime(timeStr, out var t)) return null;
-                    if (t < nowTime) return null;
-                    return new BusArrival(shortName, s.TripHeadsign ?? "—", t.ToString(@"hh\:mm"), false);
-                })
-                .Where(a => a != null)
-                .OrderBy(a => a!.DisplayTime)
-                .Take(5)
-                .ToList()!;
+            var resolved = await GetRouteByNumberAsync(lineId);
+            routeOnestopId = resolved?.OnestopId ?? resolved?.Id ?? lineId;
         }
-        catch { return new List<BusArrival>(); }
+
+        var schedules = await GetTransitlandListAsync<TransitlandSchedule>(
+            $"schedules?stop_onestop_id={Uri.EscapeDataString(stopId)}" +
+            $"&route_onestop_id={Uri.EscapeDataString(routeOnestopId)}" +
+            $"&date={today}&per_page=200",
+            "schedules");
+    
+        if (!schedules.Any()) return [];
+
+        // Obter o shortName uma vez, fora do loop
+        var route = await GetRouteByNumberAsync(lineId);
+        var shortName = route?.RouteNumber ?? route?.Name ?? lineId;
+        var upcomingSchedules = new List<(TransitlandSchedule Schedule, TimeSpan Time)>();
+        foreach (var schedule in schedules)
+        {
+            var time = schedule.ArrivalTime ?? schedule.DepartureTime;
+            if (string.IsNullOrWhiteSpace(time) || !TryParseGtfsTime(time, out var parsedTime))
+                throw new InvalidDataException("Transitland returned a schedule with an invalid time.");
+
+            if (parsedTime >= nowTime)
+                upcomingSchedules.Add((schedule, parsedTime));
+        }
+
+        return upcomingSchedules
+            .OrderBy(candidate => candidate.Time.ToString(@"hh\:mm"))
+            .Take(5)
+            .Select(candidate => new BusArrival(
+                shortName,
+                candidate.Schedule.TripHeadsign ?? "—",
+                candidate.Time.ToString(@"hh\:mm"),
+                false))
+            .ToList();
     }
     
     // GTFS permite horas > 24 para viagens noturnas que passam a meia-noite
@@ -314,74 +308,86 @@ public class TransitlandService : IBusService
             ? url
             : $"{url}&apikey={Uri.EscapeDataString(_apiKey)}";
 
-        var response = await _http.GetAsync(urlWithKey);
-        var status = response.StatusCode;
         _logger.ApiRequest(nameof(TransitlandService), _http.BaseAddress, urlWithKey);
-        if (!response.IsSuccessStatusCode)
-        {
-            _logger.Warning(nameof(TransitlandService), $"API request failed with status {status}: {url}");
-            return (new List<T>(), null);
-        }
-
-        var json = await response.Content.ReadAsStringAsync();
-        _logger.ApiResponse(nameof(TransitlandService), url, status, json.Length);
-        if (string.IsNullOrWhiteSpace(json)) return (new List<T>(), null);
-
-        var trimmedBody = json.TrimStart();
-        if (trimmedBody.StartsWith("<", StringComparison.Ordinal))
-        {
-            _logger.Warning(nameof(TransitlandService), $"API returned HTML instead of JSON. Status: {status}. Endpoint: {url}. Snippet: {GetSnippet(trimmedBody)}");
-            return (new List<T>(), null);
-        }
-
+        HttpResponseMessage response;
         try
         {
-            using var document = JsonDocument.Parse(json);
-            var root = document.RootElement;
+            response = await _http.GetAsync(urlWithKey);
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException)
+        {
+            _logger.Error(nameof(TransitlandService), $"API request failed: {url}", exception);
+            throw new TransitSourceUnavailableException($"Transitland is unavailable while requesting '{url}'.", exception);
+        }
 
-            if (root.ValueKind == JsonValueKind.Array)
+        using (response)
+        {
+            var status = response.StatusCode;
+            if (!response.IsSuccessStatusCode)
             {
-                return (JsonSerializer.Deserialize<List<T>>(root.GetRawText(), _options) ?? new List<T>(), null);
+                _logger.Warning(nameof(TransitlandService), $"API request failed with status {status}: {url}");
+                throw new TransitSourceUnavailableException($"Transitland returned HTTP {(int)status} for '{url}'.");
             }
 
-            if (root.ValueKind == JsonValueKind.Object)
+            string json;
+            try
             {
-                foreach (var propertyName in arrayPropertyNames)
-                {
-                    if (TryGetPropertyIgnoreCase(root, propertyName, out var property) && property.ValueKind == JsonValueKind.Array)
-                    {
-                        return (JsonSerializer.Deserialize<List<T>>(property.GetRawText(), _options) ?? new List<T>(), GetAfter(root));
-                    }
-                }
+                json = await response.Content.ReadAsStringAsync();
+            }
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException)
+            {
+                _logger.Error(nameof(TransitlandService), $"API response read failed: {url}", exception);
+                throw new TransitSourceUnavailableException($"Transitland is unavailable while reading '{url}'.", exception);
+            }
+            _logger.ApiResponse(nameof(TransitlandService), url, status, json.Length);
+            if (string.IsNullOrWhiteSpace(json)) return ([], null);
 
-                foreach (var property in root.EnumerateObject())
-                {
-                    if (property.Value.ValueKind == JsonValueKind.Array)
-                    {
-                        return (JsonSerializer.Deserialize<List<T>>(property.Value.GetRawText(), _options) ?? new List<T>(), GetAfter(root));
-                    }
-                }
+            var trimmedBody = json.TrimStart();
+            if (trimmedBody.StartsWith("<", StringComparison.Ordinal))
+            {
+                _logger.Warning(nameof(TransitlandService), $"API returned HTML instead of JSON. Status: {status}. Endpoint: {url}. Snippet: {GetSnippet(trimmedBody)}");
+                throw new InvalidDataException($"Transitland returned an invalid response for '{url}'.");
+            }
 
-                // Se chegámos até aqui, a resposta foi 200 mas não continha arrays — registar chaves e payload para diagnóstico
-                try
+            try
+            {
+                using var document = JsonDocument.Parse(json);
+                var root = document.RootElement;
+
+                if (root.ValueKind == JsonValueKind.Array)
+                    return (DeserializeList<T>(root.GetRawText(), url), null);
+
+                if (root.ValueKind == JsonValueKind.Object)
                 {
-                    var keys = root.EnumerateObject().Select(p => p.Name).ToArray();
+                    foreach (var propertyName in arrayPropertyNames)
+                    {
+                        if (TryGetPropertyIgnoreCase(root, propertyName, out var property) && property.ValueKind == JsonValueKind.Array)
+                            return (DeserializeList<T>(property.GetRawText(), url), GetAfter(root));
+                    }
+
+                    foreach (var property in root.EnumerateObject())
+                    {
+                        if (property.Value.ValueKind == JsonValueKind.Array)
+                            return (DeserializeList<T>(property.Value.GetRawText(), url), GetAfter(root));
+                    }
+
+                    var keys = root.EnumerateObject().Select(property => property.Name).ToArray();
                     _logger.Warning(nameof(TransitlandService), $"API returned JSON without arrays. Keys: {string.Join(", ", keys)}. Status: {status}. Endpoint: {url}. Payload: {GetSnippet(json)}");
                 }
-                catch
-                {
-                    _logger.Warning(nameof(TransitlandService), $"API returned JSON without arrays and keys could not be enumerated. Status: {status}. Endpoint: {url}. Payload: {GetSnippet(json)}");
-                }
-            }
 
-            return (new List<T>(), null);
-        }
-        catch (JsonException ex)
-        {
-            _logger.Error(nameof(TransitlandService), $"API returned invalid JSON. Status: {status}. Endpoint: {url}. Snippet: {GetSnippet(json)}", ex);
-            return (new List<T>(), null);
+                throw new InvalidDataException($"Transitland returned an unsupported payload for '{url}'.");
+            }
+            catch (JsonException exception)
+            {
+                _logger.Error(nameof(TransitlandService), $"API returned invalid JSON. Status: {status}. Endpoint: {url}. Snippet: {GetSnippet(json)}", exception);
+                throw new InvalidDataException($"Transitland returned invalid JSON for '{url}'.", exception);
+            }
         }
     }
+
+    private List<T> DeserializeList<T>(string json, string endpoint)
+        => JsonSerializer.Deserialize<List<T>>(json, _options)
+            ?? throw new InvalidDataException($"Transitland returned a null list for '{endpoint}'.");
 
     private static string? GetAfter(JsonElement root)
     {

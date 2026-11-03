@@ -87,17 +87,9 @@ public sealed class CarrisLisboaService : IBusService
         var line = await GetLineDataAsync(lineId);
         if (line is null) return [];
 
-        try
-        {
-            var lisbonZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Lisbon");
-            var now = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, lisbonZone);
-            return GetUpcomingArrivals(line, stopId, now);
-        }
-        catch (Exception exception)
-        {
-            _logger.Error(nameof(CarrisLisboaService), $"Failed to filter static arrivals for stop '{stopId}'.", exception);
-            return [];
-        }
+        var lisbonZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Lisbon");
+        var now = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, lisbonZone);
+        return GetUpcomingArrivals(line, stopId, now);
     }
 
     public static List<BusArrival> GetUpcomingArrivals(
@@ -172,69 +164,105 @@ public sealed class CarrisLisboaService : IBusService
             string.Equals(line.Number, normalizedLineNumber, StringComparison.OrdinalIgnoreCase));
         if (manifestLine is null) return null;
 
+        HttpResponseMessage response;
         try
         {
-            using var response = await _http.GetAsync(manifestLine.File);
+            response = await _http.GetAsync(manifestLine.File);
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException)
+        {
+            _logger.Error(nameof(CarrisLisboaService), $"Failed to load static line data: {manifestLine.File}", exception);
+            throw new TransitSourceUnavailableException(
+                $"Carris Lisboa static data is unavailable for line '{normalizedLineNumber}'.",
+                exception);
+        }
+
+        using (response)
+        {
             if (!response.IsSuccessStatusCode)
             {
                 _logger.Warning(nameof(CarrisLisboaService), $"Static line data failed with status {response.StatusCode}: {manifestLine.File}");
-                return null;
+                throw new TransitSourceUnavailableException(
+                    $"Carris Lisboa static data returned HTTP {(int)response.StatusCode} for line '{normalizedLineNumber}'.");
             }
 
-            var json = await response.Content.ReadAsStringAsync();
+            string json;
+            try
+            {
+                json = await response.Content.ReadAsStringAsync();
+            }
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException)
+            {
+                _logger.Error(nameof(CarrisLisboaService), $"Failed to read static line data: {manifestLine.File}", exception);
+                throw new TransitSourceUnavailableException(
+                    $"Carris Lisboa static data is unavailable for line '{normalizedLineNumber}'.",
+                    exception);
+            }
             if (!HasCurrentStopTimeSchema(json))
             {
                 _logger.Warning(nameof(CarrisLisboaService), $"Static line data has an unsupported stop time schema: {manifestLine.File}");
-                return null;
+                throw new InvalidDataException($"Carris Lisboa static line data has an unsupported stop time schema: {manifestLine.File}");
             }
 
             var line = JsonSerializer.Deserialize<GtfsStaticLine>(json, _jsonOptions);
             if (line is null || line.Version != StaticDataVersion)
             {
                 _logger.Warning(nameof(CarrisLisboaService), $"Static line data has an unsupported format: {manifestLine.File}");
-                return null;
+                throw new InvalidDataException($"Carris Lisboa static line data has an unsupported format: {manifestLine.File}");
             }
 
             _lineCache[normalizedLineNumber] = line;
             return line;
-        }
-        catch (Exception exception)
-        {
-            _logger.Error(nameof(CarrisLisboaService), $"Failed to load static line data: {manifestLine.File}", exception);
-            return null;
         }
     }
 
     private async Task<GtfsStaticManifest?> LoadManifestAsync()
     {
         if (_manifestLoaded) return _manifest;
-        _manifestLoaded = true;
 
+        HttpResponseMessage response;
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, "manifest.json");
             request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
-            using var response = await _http.SendAsync(request);
+            response = await _http.SendAsync(request);
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException)
+        {
+            _logger.Error(nameof(CarrisLisboaService), "Failed to load static data manifest.", exception);
+            throw new TransitSourceUnavailableException("Carris Lisboa static data manifest is unavailable.", exception);
+        }
+
+        using (response)
+        {
             if (!response.IsSuccessStatusCode)
             {
                 _logger.Warning(nameof(CarrisLisboaService), $"Static data manifest failed with status {response.StatusCode}.");
-                return null;
+                throw new TransitSourceUnavailableException(
+                    $"Carris Lisboa static data manifest returned HTTP {(int)response.StatusCode}.");
             }
 
-            var json = await response.Content.ReadAsStringAsync();
+            string json;
+            try
+            {
+                json = await response.Content.ReadAsStringAsync();
+            }
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException)
+            {
+                _logger.Error(nameof(CarrisLisboaService), "Failed to read static data manifest.", exception);
+                throw new TransitSourceUnavailableException(
+                    "Carris Lisboa static data manifest is unavailable.",
+                    exception);
+            }
             var manifest = JsonSerializer.Deserialize<GtfsStaticManifest>(json, _jsonOptions);
-            if (manifest is null || manifest.Version != StaticDataVersion)
+            if (manifest is null || manifest.Version != StaticDataVersion || manifest.Lines is null)
             {
                 _logger.Warning(nameof(CarrisLisboaService), "Static data manifest has an unsupported format.");
-                return null;
+                throw new InvalidDataException("Carris Lisboa static data manifest has an unsupported format.");
             }
 
+            _manifestLoaded = true;
             return _manifest = manifest;
-        }
-        catch (Exception exception)
-        {
-            _logger.Error(nameof(CarrisLisboaService), "Failed to load static data manifest.", exception);
-            return null;
         }
     }
 

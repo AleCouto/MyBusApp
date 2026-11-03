@@ -151,6 +151,71 @@ public sealed class CarrisMetropolitanaArrivalTests
         Assert.Equal("[YA15B]3710", arrivals[1].LineId);
     }
 
+    [Fact]
+    public async Task GetArrivalsAsync_ReturnsEmptyForSuccessfulEmptyResponse()
+    {
+        var arrivals = await QueryArrivalsAsync(HttpStatusCode.OK, "[]");
+
+        Assert.Empty(arrivals);
+    }
+
+    [Fact]
+    public async Task GetArrivalsAsync_ReportsHttpFailureAsUnavailable()
+    {
+        await Assert.ThrowsAsync<TransitSourceUnavailableException>(
+            () => QueryArrivalsAsync(HttpStatusCode.ServiceUnavailable, "[]"));
+    }
+
+    [Fact]
+    public async Task GetArrivalsAsync_ReportsMalformedJsonAsInvalidData()
+    {
+        await Assert.ThrowsAsync<System.Text.Json.JsonException>(
+            () => QueryArrivalsAsync(HttpStatusCode.OK, "{invalid json"));
+    }
+
+    private static async Task<List<MyBusApp.Models.Domain.BusArrival>> QueryArrivalsAsync(
+        HttpStatusCode statusCode,
+        string body)
+    {
+        using var listener = new HttpListener();
+        var port = GetAvailablePort();
+        var serverBaseAddress = new Uri($"http://127.0.0.1:{port}/");
+        listener.Prefixes.Add(serverBaseAddress.AbsoluteUri);
+        listener.Start();
+
+        var responseTask = Task.Run(async () =>
+        {
+            var context = await listener.GetContextAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            var payload = System.Text.Encoding.UTF8.GetBytes(body);
+            context.Response.StatusCode = (int)statusCode;
+            context.Response.ContentType = "application/json";
+            context.Response.ContentLength64 = payload.Length;
+            await context.Response.OutputStream.WriteAsync(payload);
+            context.Response.Close();
+        });
+
+        var settings = new ApiSettings
+        {
+            CarrisMetropolitana = new ApiEndpoint
+            {
+                BaseUrl = new Uri(serverBaseAddress, "v2/").AbsoluteUri
+            }
+        };
+        var service = new CarrisMetropolitanaService(settings);
+        try
+        {
+            var arrivals = await service.GetArrivalsAsync("test-stop", "line-1")
+                .WaitAsync(TimeSpan.FromSeconds(10));
+            await responseTask;
+            return arrivals;
+        }
+        catch
+        {
+            await responseTask;
+            throw;
+        }
+    }
+
     private static Arrival CreateArrival(
         string lineId,
         string routeId,

@@ -8,7 +8,7 @@
 <div class="container mt-4 d-flex flex-column align-items-center">
     <div class="row border-bottom pb-3 mb-4 w-100">
         <div class="col text-center">
-            <h1 class="display-5">Comboios</h1>
+            <h1 class="display-5"><span aria-hidden="true">🚆</span> Comboios</h1>
             <p class="text-muted">Consulte estações, destinos e próximas partidas.</p>
         </div>
     </div>
@@ -18,6 +18,14 @@
         <div class="row w-100 justify-content-center">
             <div class="col-12 col-md-8 col-lg-6">
                 <div class="alert alert-info" role="status">@favoriteMessage</div>
+            </div>
+        </div>
+    }
+    @if (!string.IsNullOrWhiteSpace(queryMessage))
+    {
+        <div class="row w-100 justify-content-center">
+            <div class="col-12 col-md-8 col-lg-6">
+                <div class="alert alert-warning" role="alert">@queryMessage</div>
             </div>
         </div>
     }
@@ -47,6 +55,16 @@
                         }
                     </select>
                 </div>
+                @if (selectedTrainStation is not null && IsCpSelected)
+                {
+                    <div class="d-flex justify-content-between align-items-center mt-n2 mb-3">
+                        <span class="small text-muted">@selectedTrainStation.Name</span>
+                        <MyBusApp.Components.FavoriteStar ItemName="@selectedTrainStation.Name"
+                                                          IsFavorite="@isTrainFavorite"
+                                                          Disabled="@(!isTrainFavoriteStateLoaded || isUpdatingTrainFavorite)"
+                                                          OnClick="ToggleTrainFavoriteAsync" />
+                    </div>
+                }
                 <div>
                     <label class="form-label fw-bold text-secondary small text-uppercase">3. Selecione o destino</label>
                     <select class="form-select"
@@ -59,12 +77,6 @@
                         }
                     </select>
                 </div>
-                @if (selectedTrainStation is not null)
-                {
-                    <button class="btn btn-outline-primary mt-3" @onclick="AddTrainFavoriteAsync">
-                        <i class="bi bi-heart me-1" aria-hidden="true"></i>Guardar estação nos favoritos
-                    </button>
-                }
             </div>
 
             @if (selectedTrainService is not null && !isLoadingTrainStations && trainStations.Count == 0)
@@ -127,29 +139,72 @@
     private bool isLoadingTrainStations;
     private bool isLoadingTrainDirections;
     private bool isLoadingTrainDepartures;
+    private bool isTrainFavorite;
+    private bool isTrainFavoriteStateLoaded;
+    private bool isUpdatingTrainFavorite;
     private string? favoriteMessage;
+    private string? queryMessage;
 
-    private async Task AddTrainFavoriteAsync()
+    private bool IsCpSelected
+        => string.Equals(selectedTrainService?.OperatorName, "CP", StringComparison.Ordinal);
+
+    private TransitFavorite? GetSelectedTrainFavorite()
     {
-        if (selectedTrainService is null || selectedTrainStation is null ||
-            !string.Equals(selectedTrainService.OperatorName, "CP", StringComparison.Ordinal))
-            return;
+        if (!IsCpSelected || selectedTrainStation is null)
+            return null;
 
+        return new TransitFavorite(
+            FavoriteTransportMode.Train,
+            FavoriteProvider.Cp,
+            selectedTrainStation.Id,
+            selectedTrainStation.Name);
+    }
+
+    private async Task LoadTrainFavoriteStateAsync()
+    {
         try
         {
-            var favorite = new TransitFavorite(
-                FavoriteTransportMode.Train,
-                FavoriteProvider.Cp,
-                selectedTrainStation.Id,
-                selectedTrainStation.Name);
-            favoriteMessage = await FavoriteStore.AddAsync(favorite)
-                ? "Favorito guardado. Consulte-o na página Favoritos."
-                : "Este favorito já está guardado.";
+            var favorite = GetSelectedTrainFavorite();
+            if (favorite is null)
+                return;
+
+            isTrainFavorite = await FavoriteStore.IsFavoriteAsync(favorite);
+            isTrainFavoriteStateLoaded = true;
         }
         catch (Exception exception) when (exception is JSException or System.Text.Json.JsonException or InvalidDataException)
         {
-            Logger.Error(nameof(Trains), "Failed to save a train favorite.", exception);
-            favoriteMessage = "Não foi possível guardar o favorito neste browser.";
+            Logger.Error(nameof(Trains), "Failed to read the train favorite state.", exception);
+            favoriteMessage = "Não foi possível consultar os favoritos neste browser.";
+        }
+    }
+
+    private async Task ToggleTrainFavoriteAsync()
+    {
+        var favorite = GetSelectedTrainFavorite();
+        if (favorite is null || !isTrainFavoriteStateLoaded || isUpdatingTrainFavorite)
+            return;
+
+        var previousState = isTrainFavorite;
+        var requestedState = !previousState;
+        isTrainFavorite = requestedState;
+        isUpdatingTrainFavorite = true;
+        favoriteMessage = null;
+        try
+        {
+            isTrainFavorite = await FavoriteStore.SetFavoriteAsync(favorite, requestedState);
+            favoriteMessage = isTrainFavorite
+                ? "Favorito guardado."
+                : "Favorito removido.";
+        }
+        catch (Exception exception) when (exception is JSException or System.Text.Json.JsonException or InvalidDataException or ArgumentException)
+        {
+            isTrainFavorite = previousState;
+            Logger.Error(nameof(Trains), "Failed to update the train favorite.", exception);
+            favoriteMessage = "Não foi possível atualizar o favorito neste browser.";
+        }
+        finally
+        {
+            isUpdatingTrainFavorite = false;
         }
     }
 
@@ -157,12 +212,29 @@
     {
         ResetTrainSearch();
         favoriteMessage = null;
+        queryMessage = null;
         selectedTrainService = TrainServices.FirstOrDefault(service =>
             string.Equals(service.OperatorName, args.Value?.ToString(), StringComparison.Ordinal));
         if (selectedTrainService is null) return;
         isLoadingTrainStations = true;
-        trainStations = await selectedTrainService.GetStationsAsync();
-        isLoadingTrainStations = false;
+        try
+        {
+            trainStations = await selectedTrainService.GetStationsAsync();
+        }
+        catch (TransitSourceUnavailableException exception)
+        {
+            Logger.Warning(nameof(Trains), $"Train source unavailable: {exception.Message}");
+            queryMessage = "O serviço ferroviário está temporariamente indisponível.";
+        }
+        catch (Exception exception)
+        {
+            Logger.Error(nameof(Trains), "Failed to load train stations.", exception);
+            queryMessage = "Ocorreu um erro ao carregar as estações.";
+        }
+        finally
+        {
+            isLoadingTrainStations = false;
+        }
     }
 
     private async Task OnTrainStationSelectedAsync(ChangeEventArgs args)
@@ -171,10 +243,31 @@
         selectedTrainDirection = null;
         trainDirections.Clear();
         trainDepartures.Clear();
+        isTrainFavoriteStateLoaded = false;
+        isTrainFavorite = false;
         if (selectedTrainStation is null || selectedTrainService is null) return;
+        favoriteMessage = null;
         isLoadingTrainDirections = true;
-        trainDirections = await selectedTrainService.GetDestinationsAsync(selectedTrainStation.Id);
-        isLoadingTrainDirections = false;
+        queryMessage = null;
+        try
+        {
+            await LoadTrainFavoriteStateAsync();
+            trainDirections = await selectedTrainService.GetDestinationsAsync(selectedTrainStation.Id);
+        }
+        catch (TransitSourceUnavailableException exception)
+        {
+            Logger.Warning(nameof(Trains), $"Train source unavailable: {exception.Message}");
+            queryMessage = "O serviço ferroviário está temporariamente indisponível.";
+        }
+        catch (Exception exception)
+        {
+            Logger.Error(nameof(Trains), "Failed to load train destinations.", exception);
+            queryMessage = "Ocorreu um erro ao carregar os destinos.";
+        }
+        finally
+        {
+            isLoadingTrainDirections = false;
+        }
     }
 
     private async Task OnTrainDirectionSelectedAsync(ChangeEventArgs args)
@@ -183,15 +276,36 @@
         trainDepartures.Clear();
         if (selectedTrainDirection is null || selectedTrainStation is null || selectedTrainService is null) return;
         isLoadingTrainDepartures = true;
-        trainDepartures = await selectedTrainService.GetDeparturesAsync(selectedTrainStation.Id, selectedTrainDirection.Id);
-        isLoadingTrainDepartures = false;
+        queryMessage = null;
+        try
+        {
+            trainDepartures = await selectedTrainService.GetDeparturesAsync(selectedTrainStation.Id, selectedTrainDirection.Id);
+        }
+        catch (TransitSourceUnavailableException exception)
+        {
+            Logger.Warning(nameof(Trains), $"Train source unavailable: {exception.Message}");
+            queryMessage = "O serviço ferroviário está temporariamente indisponível.";
+        }
+        catch (Exception exception)
+        {
+            Logger.Error(nameof(Trains), "Failed to load train departures.", exception);
+            queryMessage = "Ocorreu um erro ao consultar as próximas partidas.";
+        }
+        finally
+        {
+            isLoadingTrainDepartures = false;
+        }
     }
 
     private void ResetTrainSearch()
     {
+        queryMessage = null;
         selectedTrainService = null;
         selectedTrainStation = null;
         selectedTrainDirection = null;
+        isTrainFavorite = false;
+        isTrainFavoriteStateLoaded = false;
+        isUpdatingTrainFavorite = false;
         trainStations.Clear();
         trainDirections.Clear();
         trainDepartures.Clear();

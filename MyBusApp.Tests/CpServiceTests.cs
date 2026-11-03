@@ -241,13 +241,27 @@ public sealed class CpServiceTests
     [InlineData("arrivalTimeSeconds", false)]
     [InlineData("departureTimeSeconds", true)]
     [InlineData("departureTimeSeconds", false)]
-    public async Task GetStationsAsync_RejectsMissingOrInvalidStopTimeFields(string fieldName, bool isMissing)
+    public async Task GetStationsAsync_ReportsMissingOrInvalidStopTimeFields(string fieldName, bool isMissing)
     {
         var service = CreateService(CreateApLineJsonWithInvalidStopTimeField(fieldName, isMissing), onlyApLine: true);
 
-        var stations = await service.GetStationsAsync();
+        await Assert.ThrowsAsync<InvalidDataException>(() => service.GetStationsAsync());
+    }
 
-        Assert.Empty(stations);
+    [Fact]
+    public async Task GetStationsAsync_ThrowsUnavailableWhenManifestRequestFails()
+    {
+        var service = CreateService(new FakeHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)));
+
+        await Assert.ThrowsAsync<TransitSourceUnavailableException>(() => service.GetStationsAsync());
+    }
+
+    [Fact]
+    public async Task GetStationsAsync_ThrowsUnavailableWhenManifestRequestRaisesNetworkException()
+    {
+        var service = CreateService(new FakeHandler(_ => throw new HttpRequestException("network failure")));
+
+        await Assert.ThrowsAsync<TransitSourceUnavailableException>(() => service.GetStationsAsync());
     }
 
     [Fact]
@@ -385,6 +399,16 @@ public sealed class CpServiceTests
                 ? JsonResponse(line)
                 : new HttpResponseMessage(HttpStatusCode.NotFound);
         });
+        var settings = new ApiSettings();
+        settings.Cp.StaticDataBaseUrl = "https://static.test/cp/";
+        return new CpService(settings, new HttpClient(handler)
+        {
+            BaseAddress = new Uri("https://static.test/")
+        });
+    }
+
+    private static CpService CreateService(HttpMessageHandler handler)
+    {
         var settings = new ApiSettings();
         settings.Cp.StaticDataBaseUrl = "https://static.test/cp/";
         return new CpService(settings, new HttpClient(handler)

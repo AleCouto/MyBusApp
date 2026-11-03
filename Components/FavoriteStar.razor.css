@@ -1,0 +1,35 @@
+.favorite-star {
+    display: inline-flex;
+    flex: 0 0 2.25rem;
+    align-items: center;
+    justify-content: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: #adb5bd;
+    font-size: 1.25rem;
+    line-height: 1;
+    cursor: pointer;
+    transition: color 120ms ease-in-out, transform 120ms ease-in-out;
+}
+
+.favorite-star.is-favorite {
+    color: #ffc107;
+}
+
+.favorite-star:hover:not(:disabled) {
+    transform: scale(1.08);
+}
+
+.favorite-star:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+}
+
+.favorite-star:disabled {
+    cursor: wait;
+    opacity: 0.65;
+}

@@ -72,64 +72,99 @@
                                 </button>
                             </div>
                         </div>
-                        @if (entry.IsLoading)
+                        @if (entry.State == FavoriteQueryState.Loading && entry.LastSuccessfulState is null)
                         {
                             <div class="card-body text-muted" role="status">
                                 <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
                                 A carregar próximas partidas...
                             </div>
                         }
-                        else if (!string.IsNullOrWhiteSpace(entry.Error))
-                        {
-                            <div class="card-body text-warning" role="alert">@entry.Error</div>
-                        }
-                        else if (entry.Favorite.Mode == FavoriteTransportMode.Bus && entry.BusArrivals.Count > 0)
-                        {
-                            <ul class="list-group list-group-flush">
-                                @foreach (var arrival in entry.BusArrivals)
-                                {
-                                    <li class="list-group-item d-flex justify-content-between align-items-center gap-2">
-                                        <div>
-                                            <span class="badge bg-primary">@arrival.LineNumber</span>
-                                            <span class="ms-2">@arrival.Destination</span>
-                                        </div>
-                                        <div class="text-end">
-                                            <strong class="@(arrival.IsRealTime ? "text-success" : "text-dark")">
-                                                @if (arrival.IsRealTime)
-                                                {
-                                                    <i class="bi bi-broadcast me-1" aria-hidden="true"></i>
-                                                }
-                                                @arrival.DisplayTime
-                                            </strong>
-                                            <div><small class="text-muted">@(arrival.IsRealTime ? "Tempo real" : "Agendado")@GetTimeRemainingLabel(arrival.DisplayTime)</small></div>
-                                        </div>
-                                    </li>
-                                }
-                            </ul>
-                        }
-                        else if (entry.Favorite.Mode == FavoriteTransportMode.Train && entry.TrainDepartures.Count > 0)
-                        {
-                            <ul class="list-group list-group-flush">
-                                @foreach (var departure in entry.TrainDepartures)
-                                {
-                                    <li class="list-group-item d-flex justify-content-between align-items-center gap-2">
-                                        <div>
-                                            <span class="badge bg-primary">@departure.ServiceName</span>
-                                            <span class="ms-2">@departure.Destination</span>
-                                        </div>
-                                        <div class="text-end">
-                                            <strong>@departure.DisplayTime</strong>
-                                            <div><small class="text-muted">@("Agendado" + GetTimeRemainingLabel(departure.DisplayTime))</small></div>
-                                        </div>
-                                    </li>
-                                }
-                            </ul>
-                        }
                         else
                         {
-                            <div class="card-body text-muted">
-                                Não há partidas disponíveis agora; o serviço também pode estar temporariamente indisponível.
-                            </div>
+                            @if (entry.State == FavoriteQueryState.Loading)
+                            {
+                                <div class="card-body text-muted" role="status">
+                                    <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+                                    A atualizar; a manter os últimos resultados válidos.
+                                </div>
+                            }
+                            else if (entry.State == FavoriteQueryState.Unavailable)
+                            {
+                                <div class="card-body text-warning" role="alert">
+                                    O serviço ou a fonte está indisponível.
+                                    @if (entry.LastSuccessfulState == FavoriteQueryState.WithDepartures)
+                                    {
+                                        <span> A apresentar as partidas da última consulta válida.</span>
+                                    }
+                                    else if (entry.LastSuccessfulState == FavoriteQueryState.NoDepartures)
+                                    {
+                                        <span> A última consulta válida não tinha partidas.</span>
+                                    }
+                                </div>
+                            }
+                            else if (entry.State == FavoriteQueryState.Error)
+                            {
+                                <div class="card-body text-warning" role="alert">
+                                    Ocorreu um erro ao consultar este favorito.
+                                    @if (entry.LastSuccessfulState == FavoriteQueryState.WithDepartures)
+                                    {
+                                        <span> A apresentar as partidas da última consulta válida.</span>
+                                    }
+                                    else if (entry.LastSuccessfulState == FavoriteQueryState.NoDepartures)
+                                    {
+                                        <span> A última consulta válida não tinha partidas.</span>
+                                    }
+                                </div>
+                            }
+
+                            @if (entry.Favorite.Mode == FavoriteTransportMode.Bus && entry.BusArrivals.Count > 0)
+                            {
+                                <ul class="list-group list-group-flush">
+                                    @foreach (var arrival in entry.BusArrivals)
+                                    {
+                                        <li class="list-group-item d-flex justify-content-between align-items-center gap-2">
+                                            <div>
+                                                <span class="badge bg-primary">@arrival.LineNumber</span>
+                                                <span class="ms-2">@arrival.Destination</span>
+                                            </div>
+                                            <div class="text-end">
+                                                <strong class="@(arrival.IsRealTime ? "text-success" : "text-dark")">
+                                                    @if (arrival.IsRealTime)
+                                                    {
+                                                        <i class="bi bi-broadcast me-1" aria-hidden="true"></i>
+                                                    }
+                                                    @arrival.DisplayTime
+                                                </strong>
+                                                <div><small class="text-muted">@(arrival.IsRealTime ? "Tempo real" : "Agendado")@GetTimeRemainingLabel(arrival.DisplayTime)</small></div>
+                                            </div>
+                                        </li>
+                                    }
+                                </ul>
+                            }
+                            else if (entry.Favorite.Mode == FavoriteTransportMode.Train && entry.TrainDepartures.Count > 0)
+                            {
+                                <ul class="list-group list-group-flush">
+                                    @foreach (var departure in entry.TrainDepartures)
+                                    {
+                                        <li class="list-group-item d-flex justify-content-between align-items-center gap-2">
+                                            <div>
+                                                <span class="badge bg-primary">@departure.ServiceName</span>
+                                                <span class="ms-2">@departure.Destination</span>
+                                            </div>
+                                            <div class="text-end">
+                                                <strong>@departure.DisplayTime</strong>
+                                                <div><small class="text-muted">@("Agendado" + GetTimeRemainingLabel(departure.DisplayTime))</small></div>
+                                            </div>
+                                        </li>
+                                    }
+                                </ul>
+                            }
+                            else if (entry.LastSuccessfulState == FavoriteQueryState.NoDepartures)
+                            {
+                                <div class="card-body text-muted">
+                                    Consulta concluída sem partidas disponíveis.
+                                </div>
+                            }
                         }
                     </article>
                 }
@@ -172,7 +207,11 @@
     private async Task LoadEntriesAsync()
     {
         isLoading = true;
-        entries = favorites.Select(favorite => new FavoriteEntry(favorite)).ToList();
+        var previousEntries = entries;
+        entries = favorites
+            .Select(favorite => previousEntries.FirstOrDefault(entry => IsSameFavorite(entry.Favorite, favorite))
+                ?? new FavoriteEntry(favorite))
+            .ToList();
         await InvokeAsync(StateHasChanged);
         await Task.WhenAll(entries.Select(LoadFavoriteAsync));
         isLoading = false;
@@ -181,25 +220,25 @@
 
     private async Task LoadFavoriteAsync(FavoriteEntry entry)
     {
+        entry.State = FavoriteQueryState.Loading;
         try
         {
             if (entry.Favorite.Mode == FavoriteTransportMode.Bus)
             {
                 var provider = GetBusProvider(entry.Favorite.Provider);
                 if (provider is null || string.IsNullOrWhiteSpace(entry.Favorite.LineNumber))
-                {
-                    entry.Error = "O contexto guardado para esta linha não é válido.";
-                    return;
-                }
+                    throw new InvalidDataException("The saved bus favorite context is invalid.");
 
                 var resolved = await BusServiceRouter.ResolveLineAsync(provider.Value, entry.Favorite.LineNumber);
                 if (resolved.Line is null || resolved.Service is null)
                 {
-                    entry.Error = "A linha guardada não está disponível neste momento.";
+                    entry.State = FavoriteQueryState.Unavailable;
                     return;
                 }
 
-                entry.BusArrivals = await resolved.Service.GetArrivalsAsync(entry.Favorite.StopId, resolved.Line.Id);
+                var arrivals = await resolved.Service.GetArrivalsAsync(entry.Favorite.StopId, resolved.Line.Id);
+                entry.BusArrivals = arrivals;
+                SetSuccessfulState(entry, arrivals.Count > 0);
                 return;
             }
 
@@ -207,29 +246,43 @@
                 string.Equals(service.OperatorName, "CP", StringComparison.Ordinal));
             if (trainService is null || entry.Favorite.Provider != FavoriteProvider.Cp)
             {
-                entry.Error = "O operador ferroviário guardado não está disponível.";
+                entry.State = FavoriteQueryState.Unavailable;
                 return;
             }
 
             var directions = await trainService.GetDestinationsAsync(entry.Favorite.StopId);
             var departuresByDirection = await Task.WhenAll(directions.Select(direction =>
                 trainService.GetDeparturesAsync(entry.Favorite.StopId, direction.Id)));
-            entry.TrainDepartures = departuresByDirection
+            var departures = departuresByDirection
                 .SelectMany(departures => departures)
                 .OrderBy(departure => GetMinutesUntil(departure.DisplayTime))
                 .Take(5)
                 .ToList();
+            entry.TrainDepartures = departures;
+            SetSuccessfulState(entry, departures.Count > 0);
+        }
+        catch (TransitSourceUnavailableException exception)
+        {
+            Logger.Warning(nameof(FavoritesDashboard), $"Source unavailable for favorite '{entry.Favorite.StopName}': {exception.Message}");
+            entry.State = FavoriteQueryState.Unavailable;
         }
         catch (Exception exception)
         {
             Logger.Error(nameof(FavoritesDashboard), $"Failed to load favorite '{entry.Favorite.StopName}'.", exception);
-            entry.Error = "Não foi possível consultar este favorito. Os restantes continuam disponíveis.";
+            entry.State = FavoriteQueryState.Error;
         }
         finally
         {
-            entry.IsLoading = false;
             await InvokeAsync(StateHasChanged);
         }
+    }
+
+    private static void SetSuccessfulState(FavoriteEntry entry, bool hasDepartures)
+    {
+        entry.State = hasDepartures
+            ? FavoriteQueryState.WithDepartures
+            : FavoriteQueryState.NoDepartures;
+        entry.LastSuccessfulState = entry.State;
     }
 
     private async Task RemoveAsync(TransitFavorite favorite)
@@ -304,7 +357,7 @@
         {
             FavoriteProvider.Metropolitana => "Carris Metropolitana",
             FavoriteProvider.CarrisLisboa => "Carris Lisboa",
-            FavoriteProvider.Transitland => "Transitland",
+                FavoriteProvider.Transitland => "Fonte técnica: Transitland",
             FavoriteProvider.Cp => "CP",
             _ => provider.ToString()
         };
@@ -348,11 +401,20 @@
         return difference.TotalMinutes;
     }
 
+    private enum FavoriteQueryState
+    {
+        Loading,
+        NoDepartures,
+        WithDepartures,
+        Unavailable,
+        Error
+    }
+
     private sealed class FavoriteEntry(TransitFavorite favorite)
     {
         public TransitFavorite Favorite { get; } = favorite;
-        public bool IsLoading { get; set; } = true;
-        public string? Error { get; set; }
+        public FavoriteQueryState State { get; set; } = FavoriteQueryState.Loading;
+        public FavoriteQueryState? LastSuccessfulState { get; set; }
         public List<BusArrival> BusArrivals { get; set; } = [];
         public List<TrainDeparture> TrainDepartures { get; set; } = [];
     }

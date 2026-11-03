@@ -101,7 +101,12 @@ condicionar a arquitetura nem atrasar o objetivo principal.
 -   `BusServiceRouter` permanece limitado aos autocarros. Não criar
     router multimodal sem necessidade demonstrada.
 -   Transitland é uma fonte/agregador técnico no contexto dos
-    autocarros, não um operador nem um modo.
+    autocarros, não um operador nem um modo. Não apresentar Transitland
+    na interface como empresa transportadora. Apresentar o operador
+    real apenas quando essa informação estiver disponível e validada;
+    caso contrário, não atribuir nem inventar um nome. Preservar a
+    identificação técnica do provider internamente quando necessária
+    para resolver consultas e identificar favoritos.
 -   Reutilizar `Tools/GtfsDataGenerator` quando a fonte for GTFS
     compatível.
 -   Não processar ZIPs GTFS no browser.
@@ -116,8 +121,9 @@ condicionar a arquitetura nem atrasar o objetivo principal.
 -   A persistência dos favoritos deve ser decidida após inspeção da
     aplicação. Não introduzir backend ou autenticação apenas para
     guardar favoritos sem necessidade demonstrada.
--   Os favoritos devem guardar identificadores estáveis do operador e da
-    paragem/estação, não depender apenas do nome apresentado.
+-   Os favoritos devem guardar identificadores estáveis do provider ou
+    fonte técnica e da paragem/estação, não depender apenas do nome
+    apresentado.
 
 ## 4. Estado conhecido do projeto
 
@@ -178,6 +184,40 @@ frequência, cobertura, formato e redistribuição devem ser verificados.
 -   [x] Build e testes reportados como aprovados após as últimas
     alterações.
 -   [x] M7 --- arquitetura multimodal e validação funcional concluídas.
+
+**Registo de 2026-11-03 --- uniformização visual dos favoritos e da navegação**
+
+-   [x] Autocarros e Comboios usam a mesma estrela acessível para
+    adicionar/remover favoritos, com estado consultado e persistido pelo
+    `FavoriteStore`.
+-   [x] O menu apresenta os ícones dos cinco modos e mantém navegação
+    ativa e responsiva.
+-   [x] Testes automatizados, build e cenários de browser de adicionar,
+    recarregar, remover e consultar favoritos validados.
+-   **Decisão:** manter formato/chave e identidade existentes dos
+    favoritos; centralizar a leitura e alteração do estado no store.
+-   **Estado dos milestones:** M8--M18 permanecem por realizar; esta
+    alteração visual não satisfaz os critérios completos de nenhum
+    desses milestones.
+-   **Ajuste visual subsequente:** estrela reduzida para 36 px com glifo
+    menor; emojis dos modos também apresentados nos títulos das cinco
+    páginas. Build e confirmação visual no browser aprovados; os testes
+    automatizados não foram repetidos para este ajuste apenas visual.
+
+**Registo --- correção dos estados de consulta dos favoritos**
+
+-   [x] Os serviços usados pelos favoritos distinguem respostas válidas
+    sem partidas de falhas de fonte, de rede e de dados inválidos.
+-   [x] O dashboard isola falhas por favorito; testes confirmam que
+    resultados dos restantes favoritos continuam visíveis.
+-   [x] Teste de regressão confirma que uma falha de atualização mantém
+    partidas válidas anteriores, apresenta indisponibilidade em vez de
+    ausência de partidas e não impede a atualização dos restantes
+    favoritos.
+-   [x] Testes automatizados (63) e `dotnet build` concluídos sem falhas.
+-   **Limitações:** não foi feita validação manual no browser; a
+    apresentação visual dos estados durante uma consulta continua por
+    validar manualmente. M8 e M10 permanecem incompletos.
 
 **Limitação atual:** Metro e Barcos existem como opções de navegação,
 mas ainda não têm integrações reais. Não apresentar a opção na interface
@@ -284,8 +324,11 @@ frequentes.
 -   [ ] Preservar ordem e dados após recarregar/reabrir a aplicação.
 -   [ ] Tratar dados guardados inválidos, versões antigas ou referências
     inexistentes.
--   [ ] Evitar duplicados para o mesmo operador e identificador de
-    paragem/estação.
+-   [ ] Evitar duplicados em favoritos de autocarro quando coincidirem
+    provider, linha e identificador da paragem; para comboios, considerar
+    provider e identificador da estação.
+-   [ ] Permitir guardar a mesma paragem associada a linhas diferentes.
+-   [ ] Não usar apenas o nome apresentado para identificar um favorito.
 -   [ ] Adicionar testes de persistência, ordenação, duplicados, remoção
     e dados inválidos.
 
@@ -298,16 +341,25 @@ locais favoritos; testes cobrem os casos principais.
 habituais e os próximos horários disponíveis.
 
 -   [ ] Criar a experiência inicial centrada nos favoritos.
--   [ ] Mostrar cada favorito com nome, modo e operador.
+-   [ ] Mostrar cada favorito com nome e modo; apresentar o operador real
+    apenas quando estiver identificado e validado.
 -   [ ] Consultar automaticamente as próximas partidas de cada favorito.
+-   [ ] Manter a consulta agregada das partidas CP por estação e
+    apresentar claramente o destino em cada partida, sem agrupar por
+    direção nesta fase nem alterar desnecessariamente o serviço CP.
 -   [ ] Mostrar partidas sem misturar incorretamente serviços ou
     direções.
 -   [ ] Mostrar hora prevista/programada e tempo restante quando os
     dados permitirem calculá-lo.
 -   [ ] Identificar cada resultado como Tempo real ou Agendado.
--   [ ] Disponibilizar atualização manual e estratégia automática
-    adequada, sem chamadas excessivas.
--   [ ] Isolar falhas: um favorito indisponível não deve impedir os
+-   [ ] Disponibilizar atualização manual e atualização periódica
+    automática com intervalo prudente, definido durante a implementação
+    conforme as capacidades e limitações das fontes; não assumir que
+    todos os providers suportam realtime.
+-   [ ] Evitar consultas de atualização simultâneas ou sobrepostas.
+-   [ ] Suspender a atualização periódica enquanto a página não estiver
+    ativa ou estiver em segundo plano.
+-   [x] Isolar falhas: um favorito indisponível não deve impedir os
     restantes de carregar.
 -   [ ] Mostrar estados distintos para carregamento, sem partidas,
     indisponibilidade e erro.

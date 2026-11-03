@@ -79,7 +79,7 @@ public sealed class BusServiceRouterTests
     }
 
     [Fact]
-    public async Task ResolveLineAsync_WithExplicitProviderException_DoesNotUseFallback()
+    public async Task ResolveLineAsync_WithExplicitProviderException_PropagatesFailureWithoutFallback()
     {
         var carris = new FakeBusService(BusProvider.CarrisLisboa, CreateLine(BusProvider.CarrisLisboa))
         {
@@ -88,10 +88,9 @@ public sealed class BusServiceRouterTests
         var metropolitana = new FakeBusService(BusProvider.Metropolitana, CreateLine(BusProvider.Metropolitana));
         var router = new BusServiceRouter([carris, metropolitana]);
 
-        var result = await router.ResolveLineAsync(BusProvider.CarrisLisboa, "12");
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => router.ResolveLineAsync(BusProvider.CarrisLisboa, "12"));
 
-        Assert.Null(result.Line);
-        Assert.Null(result.Service);
         Assert.Equal(1, carris.GetLineCallCount);
         Assert.Equal(0, metropolitana.GetLineCallCount);
     }
