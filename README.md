@@ -1,6 +1,8 @@
 # 🚌 MyBusApp
 
-**MyBusApp** é uma aplicação web moderna construída com **Blazor WebAssembly** desenhada para unificar a consulta de transportes públicos. A aplicação permite pesquisar linhas, percursos e horários em tempo real, integrando múltiplas operadoras (Carris Metropolitana, Carris Lisboa e Transitland) numa interface única e intuitiva.
+**MyBusApp** é uma aplicação web em **Blazor WebAssembly** para consultar rapidamente as próximas partidas dos transportes públicos usados habitualmente. Os favoritos ficam no centro da página inicial; a pesquisa manual continua disponível para consultar outras linhas, paragens, estações e destinos.
+
+Os favoritos são guardados no browser e podem ser reordenados. Para autocarros, cada favorito representa uma linha numa paragem; para comboios, representa uma estação e apresenta partidas agregadas pelos destinos disponíveis. Os horários identificam informação em tempo real quando o provider a fornece e distinguem os restantes como agendados.
 
 ## 🚀 Tecnologias
 
@@ -19,28 +21,35 @@ Localizada em `Models/Domain/`, esta camada define a "Língua Comum" da aplicaç
 * `BusLine`: Representação unificada de uma linha.
 * `BusDirection`: Sentidos de circulação (Ida/Volta).
 * `BusStop`: Paragens físicas.
-* `BusArrival`: Previsões de chegada em tempo real.
+* `BusArrival`: Previsões de chegada, com indicação de tempo real ou agendado.
+* `TrainStation`, `TrainDirection` e `TrainDeparture`: conceitos ferroviários próprios.
+* `TransitFavorite`: contexto de linha/paragem ou estação guardado pelo utilizador.
 
 ### 2. Camada de DTOs (Data Transfer Objects)
 Localizada em `Models/DTOs/`, contém as classes que representam o JSON bruto de cada API externa. Isto isola as mudanças nas APIs externas do resto da aplicação.
 
 ### 3. Camada de Serviços (Abstração)
-* **`IBusService`**: Uma interface unificada que define o contrato para qualquer provedor de transporte.
-* **`CarrisMetropolitanaService`**: Implementação que consome a API da Carris Metropolitana.
-* **`CarrisLisboaService`**: Implementação que consome a API da Carris Lisboa.
-* **`TransitlandService`**: Implementação que consome a API do Transitland (base de dados GTFS global).
+* **`IBusService`**: Interface que define o contrato dos providers de autocarros.
+* **`CarrisMetropolitanaService`**: Consome linhas, paragens e chegadas da API da Carris Metropolitana.
+* **`CarrisLisboaService`**: Consulta dados GTFS estáticos publicados como JSON por linha.
+* **`CpService`**: Consulta horários GTFS estáticos no modo Comboios.
+* **`TransitlandService`**: Fonte/agregador de autocarros de último recurso; a cobertura das pesquisas depende dos endpoints disponíveis.
+* **`FavoriteStore`**: Persiste os favoritos no `localStorage` do browser.
 
 ### 4. Injeção de Dependência Polimórfica
-A UI utiliza `IEnumerable<IBusService>`, permitindo que a aplicação suporte novas operadoras (como o Metro ou CP) apenas adicionando uma nova classe de serviço, sem alterar o código das páginas Razor.
+A resolução de autocarros usa `BusServiceRouter` e providers `IBusService`. A CP implementa separadamente `ITrainService`; não é modelada como autocarro. Metro e Barcos estão presentes apenas como modos indisponíveis, sem providers ou horários simulados.
 
 ## 🛠️ Funcionalidades
 
 - [x] **Pesquisa Inteligente:** Identifica a operadora automaticamente pelo número da linha.
 - [x] **Gestão de Cache:** Minimização de chamadas de rede através de cache local de linhas, paragens e percursos.
-- [x] **Tempo Real:** Diferenciação visual entre horários planeados e tempos reais (Live Broadcast).
+- [x] **Favoritos:** Consulta das próximas partidas das linhas/paragens e estações guardadas; permite reordenar e remover.
+- [x] **Horários:** Diferenciação visual entre previsões em tempo real e horários agendados.
 - [x] **Filtros Dinâmicos:** Carregamento em cascata (Linha -> Sentido -> Paragem).
 - [x] **Filtro por País:** Transitland limitado a Portugal (configurável em `appsettings.json`).
 - [x] **Suporte a Horários GTFS:** Parsing de horas noturnas (>24h) para o fuso horário de Lisboa.
+- [ ] **Metro e Barcos:** Sem providers reais integrados.
+- [ ] **Sincronização de favoritos:** Os favoritos permanecem neste browser e não sincronizam entre dispositivos.
 
 ## 🌐 APIs Disponíveis
 
@@ -48,17 +57,15 @@ A UI utiliza `IEnumerable<IBusService>`, permitindo que a aplicação suporte no
 - **URL Base:** `https://api.carrismetropolitana.pt/v2/`
 - **Documentação:** [api.carrismetropolitana.pt](https://api.carrismetropolitana.pt/)
 - **Autenticação:** Pública (sem chave)
-- **Dados:** Linhas, rotas, percursos, paragens e chegadas em tempo real
+- **Dados:** Linhas, rotas, percursos, paragens, previsões e horários de chegada
 - **Serviço:** `Services/CarrisMetropolitanaService.cs`
 - **DTOs:** `Models/DTOs/CarrisMetropolitana/`
 
-### GTFS estático
-- **URL Base:** `https://api.carris.pt/v2.7/`
-- **Documentação:** [api.carris.pt](https://api.carris.pt/swagger/)
-- **Autenticação:** Pública (sem chave)
-- **Estado:** Os dados planeados são publicados como JSON estático por linha; o GTFS ZIP é processado fora do browser
+### Carris Lisboa — GTFS estático
+- **Dados:** Horários planeados publicados como JSON estático por linha; o GTFS ZIP é processado fora do browser.
 - **Serviço:** `Services/CarrisLisboaService.cs`
-- **DTOs:** `Models/DTOs/CarrisLisboa/`
+- **Dados locais:** `wwwroot/data/carris-lisboa/`
+- **Estado:** Horários agendados; não são previsões em tempo real.
 
 #### Gerar dados estáticos GTFS
 
@@ -98,6 +105,12 @@ Em desenvolvimento, gere os ficheiros diretamente em `wwwroot/data/carris-lisboa
 
 A aplicação descarrega o manifesto uma vez por sessão e apenas o ficheiro da linha consultada. As chegadas da Carris Lisboa são sempre devolvidas como agendadas (`IsRealTime = false`). O ZIP GTFS não deve ser versionado; os JSON estáticos publicados podem ser versionados quando fizerem parte dos dados da aplicação.
 
+### CP — GTFS estático
+- **Dados:** Manifesto e horários GTFS estáticos versionados em `wwwroot/data/cp/`.
+- **Serviço:** `Services/CpService.cs`, no contrato ferroviário `ITrainService`.
+- **Consulta:** Operador → estação → destino/sentido → próximas partidas.
+- **Estado:** Horários agendados; não há integração realtime CP.
+
 ### Transitland 🗺️
 - **URL Base:** `https://transit.land/api/v2/rest/`
 - **Documentação:** [transit.land/documentation](https://www.transit.land/documentation/)
@@ -120,7 +133,7 @@ A aplicação descarrega o manifesto uma vez por sessão e apenas o ficheiro da 
 }
 ```
 
-> ⚠️ **Nunca partilhe a sua API Key publicamente.** O ficheiro `.gitignore` já inclui `appsettings.json`, mas tenha cuidado ao fazer commits.
+> ⚠️ A aplicação é executada no browser. Qualquer chave configurada em `wwwroot/appsettings.json` fica visível ao utilizador e não pode ser tratada como segredo. Use apenas credenciais apropriadas para exposição pública ou uma camada de servidor autorizada.
 
 #### Parâmetro Country
 
@@ -164,11 +177,11 @@ Toda a configuração das APIs está centralizada em dois ficheiros:
     },
     "Transitland": {
       "BaseUrl": "https://transit.land/api/v2/rest/",
-      "ApiKey": "YRh2Ch5ZC9OZTd4Trly0AnFI30frUv1E",
+      "ApiKey": "<SUA_API_KEY>",
       "Country": "PT"
     },
     "Cp": {
-      "BaseUrl": "https://api.cp.pt/"
+      "StaticDataBaseUrl": "data/cp/"
     }
   }
 }
@@ -183,18 +196,24 @@ MyBusApp/
 ├── Configuration/
 │   └── Configuration.cs          # Configuração tipada (ApiSettings)
 ├── Models/
-│   ├── Domain/                    # Modelos unificados (BusLine, BusDirection, BusStop, BusArrival)
+│   ├── Domain/                    # Modelos Bus/Train e favoritos
 │   └── DTOs/                     # Objetos de transferência de dados (JSON)
 │       ├── CarrisMetropolitana/  # DTOs específicos da Carris Metropolitana
 │       ├── CarrisLisboa/         # DTOs específicos da Carris Lisboa
 │       └── Transitland/          # DTOs específicos do Transitland
 ├── Services/
-│   ├── IBusService.cs            # Interface comum a todos os provedores
+│   ├── IBusService.cs            # Contrato dos providers de autocarros
+│   ├── ITrainService.cs          # Contrato ferroviário
+│   ├── FavoriteStore.cs          # Persistência browser dos favoritos
+│   ├── BusServiceRouter.cs
 │   ├── CarrisMetropolitanaService.cs
 │   ├── CarrisLisboaService.cs
+│   ├── CpService.cs
 │   └── TransitlandService.cs
 ├── Pages/
-│   └── Home.razor                # Interface de utilizador agnóstica
+│   └── Home.razor                # Pesquisa contextual por modo
+├── Components/
+│   └── FavoritesDashboard.razor  # Partidas dos favoritos
 ├── Layout/
 │   ├── MainLayout.razor
 │   └── NavMenu.razor
@@ -206,10 +225,10 @@ MyBusApp/
 
 ## 🔮 Adicionar um Novo Provedor
 
-Para adicionar uma nova operadora (ex: CP, Metro de Lisboa, etc.):
+Para adicionar um provider:
 
 1. Criar DTOs em `Models/DTOs/{NovoProvedor}/`
-2. Implementar a interface `IBusService` num novo serviço
-3. Registar no `Program.cs`: `builder.Services.AddScoped<IBusService, NovoProvedorService>();`
+2. Implementar o contrato específico do modo (`IBusService` ou `ITrainService`) num serviço
+3. Registar o serviço no `Program.cs` no modo correspondente.
 
-A UI reage automaticamente — sem necessidade de alterar as páginas Razor.
+Um novo provider de autocarros pode ser resolvido pelo router. A experiência de favoritos ou os fluxos de outros modos podem exigir alterações explícitas na interface.

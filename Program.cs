@@ -34,6 +34,14 @@ builder.Services.AddScoped<IBusService>(sp => sp.GetRequiredService<CarrisLisboa
 // Transitland — último fallback
 builder.Services.AddScoped<IBusService, TransitlandService>();
 
+// CP — serviço ferroviário de horários estáticos
+builder.Services.AddScoped<ITrainService>(sp =>
+	new CpService(
+		apiSettings,
+		new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) },
+		sp.GetRequiredService<AppLogger>()));
+
+builder.Services.AddScoped<FavoriteStore>();
 builder.Services.AddScoped<BusServiceRouter>();
 builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
 

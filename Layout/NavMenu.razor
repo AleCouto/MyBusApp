@@ -1,6 +1,6 @@
 ﻿<div class="top-row navbar navbar-dark">
     <div class="container-fluid">
-        <a class="navbar-brand" href="">MyBusApp</a>
+        <a class="navbar-brand" href="/">MyBusApp</a>
         <button title="Navigation menu" class="navbar-toggler" @onclick="ToggleNavMenu">
             <span class="navbar-toggler-icon"></span>
         </button>
@@ -10,20 +10,22 @@
 <div class="@NavMenuCssClass nav-scrollable" @onclick="ToggleNavMenu">
     <nav class="nav flex-column">
         <div class="nav-item px-3">
-            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
-                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> MyBusApp
-            </NavLink>
-        </div>
-        @* <div class="nav-item px-3">
-            <NavLink class="nav-link" href="counter">
-                <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Counter
+            <NavLink class="nav-link" href="/" Match="NavLinkMatch.All">
+                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Favoritos
             </NavLink>
         </div>
         <div class="nav-item px-3">
-            <NavLink class="nav-link" href="weather">
-                <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Weather
-            </NavLink>
-        </div> *@
+            <NavLink class="nav-link" href="/buses">Autocarros</NavLink>
+        </div>
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="/metro">Metro</NavLink>
+        </div>
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="/trains">Comboios</NavLink>
+        </div>
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="/boats">Barcos</NavLink>
+        </div>
     </nav>
 </div>
 

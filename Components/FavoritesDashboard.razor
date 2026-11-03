@@ -1,0 +1,359 @@
+@using System.Text.Json
+@using MyBusApp.Utils
+@inject FavoriteStore FavoriteStore
+@inject BusServiceRouter BusServiceRouter
+@inject IEnumerable<ITrainService> TrainServices
+@inject AppLogger Logger
+
+<section class="row w-100 justify-content-center mb-4" aria-labelledby="favorites-heading">
+    <div class="col-12 col-lg-10">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h2 id="favorites-heading" class="h4 mb-0">Próximas partidas dos favoritos</h2>
+            <button class="btn btn-outline-primary btn-sm" @onclick="RefreshAsync" disabled="@isLoading">
+                <i class="bi bi-arrow-clockwise me-1" aria-hidden="true"></i>Atualizar
+            </button>
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(storageError))
+        {
+            <div class="alert alert-warning" role="alert">@storageError</div>
+        }
+        @if (!string.IsNullOrWhiteSpace(statusMessage))
+        {
+            <div class="alert alert-info" role="status">@statusMessage</div>
+        }
+
+        @if (isLoading && entries.Count == 0)
+        {
+            <div class="text-center p-4" role="status">
+                <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+                A carregar favoritos...
+            </div>
+        }
+        else if (entries.Count == 0)
+        {
+            <div class="alert alert-light border text-muted" role="status">
+                Ainda não guardou favoritos. Pesquise uma linha ou estação e guarde a paragem ou estação que utiliza.
+            </div>
+        }
+        else
+        {
+            <div class="d-flex flex-column gap-3">
+                @for (var index = 0; index < entries.Count; index++)
+                {
+                    var entry = entries[index];
+                    <article @key="entry.Favorite" class="card shadow-sm">
+                        <div class="card-header d-flex justify-content-between align-items-center gap-2">
+                            <div>
+                                <h3 class="h6 mb-1">@GetFavoriteTitle(entry.Favorite)</h3>
+                                <small class="text-muted">@GetProviderName(entry.Favorite.Provider) · @GetModeName(entry.Favorite.Mode)</small>
+                            </div>
+                            <div class="d-flex gap-1">
+                                <button class="btn btn-outline-secondary btn-sm"
+                                        title="Mover favorito para cima"
+                                        aria-label="Mover @GetFavoriteTitle(entry.Favorite) para cima"
+                                        disabled="@(index == 0 || isLoading)"
+                                        @onclick="() => MoveAsync(entry.Favorite, -1)">
+                                    <i class="bi bi-arrow-up" aria-hidden="true"></i>
+                                </button>
+                                <button class="btn btn-outline-secondary btn-sm"
+                                        title="Mover favorito para baixo"
+                                        aria-label="Mover @GetFavoriteTitle(entry.Favorite) para baixo"
+                                        disabled="@(index == entries.Count - 1 || isLoading)"
+                                        @onclick="() => MoveAsync(entry.Favorite, 1)">
+                                    <i class="bi bi-arrow-down" aria-hidden="true"></i>
+                                </button>
+                                <button class="btn btn-outline-danger btn-sm"
+                                        title="Remover favorito"
+                                        aria-label="Remover @GetFavoriteTitle(entry.Favorite)"
+                                        disabled="@isLoading"
+                                        @onclick="() => RemoveAsync(entry.Favorite)">
+                                    <i class="bi bi-trash" aria-hidden="true"></i>
+                                </button>
+                            </div>
+                        </div>
+                        @if (entry.IsLoading)
+                        {
+                            <div class="card-body text-muted" role="status">
+                                <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+                                A carregar próximas partidas...
+                            </div>
+                        }
+                        else if (!string.IsNullOrWhiteSpace(entry.Error))
+                        {
+                            <div class="card-body text-warning" role="alert">@entry.Error</div>
+                        }
+                        else if (entry.Favorite.Mode == FavoriteTransportMode.Bus && entry.BusArrivals.Count > 0)
+                        {
+                            <ul class="list-group list-group-flush">
+                                @foreach (var arrival in entry.BusArrivals)
+                                {
+                                    <li class="list-group-item d-flex justify-content-between align-items-center gap-2">
+                                        <div>
+                                            <span class="badge bg-primary">@arrival.LineNumber</span>
+                                            <span class="ms-2">@arrival.Destination</span>
+                                        </div>
+                                        <div class="text-end">
+                                            <strong class="@(arrival.IsRealTime ? "text-success" : "text-dark")">
+                                                @if (arrival.IsRealTime)
+                                                {
+                                                    <i class="bi bi-broadcast me-1" aria-hidden="true"></i>
+                                                }
+                                                @arrival.DisplayTime
+                                            </strong>
+                                            <div><small class="text-muted">@(arrival.IsRealTime ? "Tempo real" : "Agendado")@GetTimeRemainingLabel(arrival.DisplayTime)</small></div>
+                                        </div>
+                                    </li>
+                                }
+                            </ul>
+                        }
+                        else if (entry.Favorite.Mode == FavoriteTransportMode.Train && entry.TrainDepartures.Count > 0)
+                        {
+                            <ul class="list-group list-group-flush">
+                                @foreach (var departure in entry.TrainDepartures)
+                                {
+                                    <li class="list-group-item d-flex justify-content-between align-items-center gap-2">
+                                        <div>
+                                            <span class="badge bg-primary">@departure.ServiceName</span>
+                                            <span class="ms-2">@departure.Destination</span>
+                                        </div>
+                                        <div class="text-end">
+                                            <strong>@departure.DisplayTime</strong>
+                                            <div><small class="text-muted">@("Agendado" + GetTimeRemainingLabel(departure.DisplayTime))</small></div>
+                                        </div>
+                                    </li>
+                                }
+                            </ul>
+                        }
+                        else
+                        {
+                            <div class="card-body text-muted">
+                                Não há partidas disponíveis agora; o serviço também pode estar temporariamente indisponível.
+                            </div>
+                        }
+                    </article>
+                }
+            </div>
+        }
+    </div>
+</section>
+
+@code {
+    private List<TransitFavorite> favorites = [];
+    private List<FavoriteEntry> entries = [];
+    private bool isLoading = true;
+    private string? storageError;
+    private string? statusMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            favorites = await FavoriteStore.LoadAsync();
+            await LoadEntriesAsync();
+        }
+        catch (Exception exception) when (exception is JSException or JsonException or InvalidDataException)
+        {
+            Logger.Error(nameof(FavoritesDashboard), "Failed to load saved favorites.", exception);
+            storageError = "Não foi possível carregar os favoritos guardados neste browser.";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task RefreshAsync()
+    {
+        statusMessage = null;
+        await LoadEntriesAsync();
+    }
+
+    private async Task LoadEntriesAsync()
+    {
+        isLoading = true;
+        entries = favorites.Select(favorite => new FavoriteEntry(favorite)).ToList();
+        await InvokeAsync(StateHasChanged);
+        await Task.WhenAll(entries.Select(LoadFavoriteAsync));
+        isLoading = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadFavoriteAsync(FavoriteEntry entry)
+    {
+        try
+        {
+            if (entry.Favorite.Mode == FavoriteTransportMode.Bus)
+            {
+                var provider = GetBusProvider(entry.Favorite.Provider);
+                if (provider is null || string.IsNullOrWhiteSpace(entry.Favorite.LineNumber))
+                {
+                    entry.Error = "O contexto guardado para esta linha não é válido.";
+                    return;
+                }
+
+                var resolved = await BusServiceRouter.ResolveLineAsync(provider.Value, entry.Favorite.LineNumber);
+                if (resolved.Line is null || resolved.Service is null)
+                {
+                    entry.Error = "A linha guardada não está disponível neste momento.";
+                    return;
+                }
+
+                entry.BusArrivals = await resolved.Service.GetArrivalsAsync(entry.Favorite.StopId, resolved.Line.Id);
+                return;
+            }
+
+            var trainService = TrainServices.FirstOrDefault(service =>
+                string.Equals(service.OperatorName, "CP", StringComparison.Ordinal));
+            if (trainService is null || entry.Favorite.Provider != FavoriteProvider.Cp)
+            {
+                entry.Error = "O operador ferroviário guardado não está disponível.";
+                return;
+            }
+
+            var directions = await trainService.GetDestinationsAsync(entry.Favorite.StopId);
+            var departuresByDirection = await Task.WhenAll(directions.Select(direction =>
+                trainService.GetDeparturesAsync(entry.Favorite.StopId, direction.Id)));
+            entry.TrainDepartures = departuresByDirection
+                .SelectMany(departures => departures)
+                .OrderBy(departure => GetMinutesUntil(departure.DisplayTime))
+                .Take(5)
+                .ToList();
+        }
+        catch (Exception exception)
+        {
+            Logger.Error(nameof(FavoritesDashboard), $"Failed to load favorite '{entry.Favorite.StopName}'.", exception);
+            entry.Error = "Não foi possível consultar este favorito. Os restantes continuam disponíveis.";
+        }
+        finally
+        {
+            entry.IsLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task RemoveAsync(TransitFavorite favorite)
+    {
+        var index = favorites.FindIndex(existing => IsSameFavorite(existing, favorite));
+        if (index < 0 || index >= favorites.Count)
+        {
+            statusMessage = "A lista de favoritos mudou; atualize a página e tente novamente.";
+            return;
+        }
+
+        var updated = favorites.ToList();
+        updated.RemoveAt(index);
+        await PersistFavoritesAsync(updated);
+    }
+
+    private async Task MoveAsync(TransitFavorite favorite, int offset)
+    {
+        var index = favorites.FindIndex(existing => IsSameFavorite(existing, favorite));
+        var newIndex = index + offset;
+        if (index < 0 || index >= favorites.Count || newIndex < 0 || newIndex >= favorites.Count)
+        {
+            statusMessage = "A lista de favoritos mudou; atualize a página e tente novamente.";
+            return;
+        }
+
+        var updated = favorites.ToList();
+        var movedFavorite = updated[index];
+        updated.RemoveAt(index);
+        updated.Insert(newIndex, movedFavorite);
+        await PersistFavoritesAsync(updated);
+    }
+
+    private async Task PersistFavoritesAsync(List<TransitFavorite> updated)
+    {
+        storageError = null;
+        try
+        {
+            await FavoriteStore.SaveAsync(updated);
+            favorites = updated;
+            await LoadEntriesAsync();
+        }
+        catch (JSException exception)
+        {
+            Logger.Error(nameof(FavoritesDashboard), "Failed to persist favorites in browser storage.", exception);
+            storageError = "Não foi possível guardar a alteração dos favoritos neste browser.";
+        }
+    }
+
+    private static bool IsSameFavorite(TransitFavorite left, TransitFavorite right)
+        => left.Mode == right.Mode &&
+           left.Provider == right.Provider &&
+           string.Equals(left.StopId, right.StopId, StringComparison.Ordinal) &&
+           string.Equals(left.LineNumber, right.LineNumber, StringComparison.Ordinal);
+
+    private static BusProvider? GetBusProvider(FavoriteProvider provider)
+        => provider switch
+        {
+            FavoriteProvider.Metropolitana => BusProvider.Metropolitana,
+            FavoriteProvider.CarrisLisboa => BusProvider.CarrisLisboa,
+            FavoriteProvider.Transitland => BusProvider.Transitland,
+            _ => null
+        };
+
+    private static string GetFavoriteTitle(TransitFavorite favorite)
+        => favorite.Mode == FavoriteTransportMode.Bus
+            ? $"{favorite.LineNumber} · {favorite.StopName}"
+            : favorite.StopName;
+
+    private static string GetProviderName(FavoriteProvider provider)
+        => provider switch
+        {
+            FavoriteProvider.Metropolitana => "Carris Metropolitana",
+            FavoriteProvider.CarrisLisboa => "Carris Lisboa",
+            FavoriteProvider.Transitland => "Transitland",
+            FavoriteProvider.Cp => "CP",
+            _ => provider.ToString()
+        };
+
+    private static string GetModeName(FavoriteTransportMode mode)
+        => mode switch
+        {
+            FavoriteTransportMode.Bus => "Autocarros",
+            FavoriteTransportMode.Train => "Comboios",
+            _ => mode.ToString()
+        };
+
+    private static string GetTimeRemainingLabel(string displayTime)
+    {
+        var minutes = GetMinutesUntil(displayTime);
+        if (!double.IsFinite(minutes))
+            return string.Empty;
+
+        return minutes <= 1
+            ? " · em breve"
+            : $" · daqui a {Math.Ceiling(minutes)} min";
+    }
+
+    private static double GetMinutesUntil(string displayTime)
+    {
+        if (!displayTime.Contains(':') ||
+            !TimeSpan.TryParse(displayTime, out var departureTime))
+            return double.PositiveInfinity;
+
+        var lisbonZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Lisbon");
+        var now = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, lisbonZone).TimeOfDay;
+        var difference = departureTime - now;
+        if (difference < TimeSpan.Zero)
+        {
+            if (difference > TimeSpan.FromMinutes(-1))
+                difference = TimeSpan.Zero;
+            else
+                difference += TimeSpan.FromDays(1);
+        }
+
+        return difference.TotalMinutes;
+    }
+
+    private sealed class FavoriteEntry(TransitFavorite favorite)
+    {
+        public TransitFavorite Favorite { get; } = favorite;
+        public bool IsLoading { get; set; } = true;
+        public string? Error { get; set; }
+        public List<BusArrival> BusArrivals { get; set; } = [];
+        public List<TrainDeparture> TrainDepartures { get; set; } = [];
+    }
+}

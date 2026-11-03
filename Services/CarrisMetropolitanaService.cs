@@ -75,19 +75,36 @@ public class CarrisMetropolitanaService : IBusService
     {
         var rawArrivals = await GetArrivalsByStopIdAsync(stopId);
         _logger.Info(nameof(CarrisMetropolitanaService), $"Arrivals loaded for stop '{stopId}': {rawArrivals.Count} records; filtering for line '{lineId}'.");
-        
+
+        var publicLineNumber = _cachedLines?
+            .FirstOrDefault(line => line.Id == lineId)?.ShortName;
         var currentTime = DateTime.Now.TimeOfDay;
 
         var arrivals = rawArrivals
-            .Where(a => (a.LineId == lineId || a.RouteId == lineId || a.PatternId.StartsWith(lineId + "_")) &&
+            .Where(a =>
+                (RemoveOperatorPrefix(a.LineId) == lineId ||
+                 RemoveOperatorPrefix(a.RouteId) == lineId ||
+                 RemoveOperatorPrefix(a.PatternId).StartsWith(lineId + "_")) &&
                 TryGetArrivalTime(a, out var arrivalTime) && arrivalTime >= currentTime)
             .OrderBy(a => GetArrivalSortTime(a))
             .Take(5)
-            .Select(a => new BusArrival(a.LineId, a.Headsign, a.DisplayTime, a.IsRealTime))
+            .Select(a => new BusArrival(
+                string.IsNullOrWhiteSpace(publicLineNumber)
+                    ? RemoveOperatorPrefix(a.LineId)
+                    : publicLineNumber,
+                a.Headsign,
+                a.DisplayTime,
+                a.IsRealTime))
             .ToList();
 
         _logger.Info(nameof(CarrisMetropolitanaService), $"Arrivals returned for stop '{stopId}' and line '{lineId}': {arrivals.Count}.");
         return arrivals;
+    }
+
+    private static string RemoveOperatorPrefix(string id)
+    {
+        var prefixEnd = id.StartsWith('[') ? id.IndexOf(']') : -1;
+        return prefixEnd >= 0 ? id[(prefixEnd + 1)..] : id;
     }
 
     private static TimeSpan GetArrivalSortTime(Arrival arrival)

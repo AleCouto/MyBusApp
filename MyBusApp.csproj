@@ -14,6 +14,7 @@
   <ItemGroup>
     <Compile Remove="MyBusApp.Tests/**/*.cs" />
     <Content Remove="MyBusApp.Tests/**" />
+    <Content Remove="Tools/**" />
     <EmbeddedResource Remove="MyBusApp.Tests/**" />
     <None Remove="MyBusApp.Tests/**" />
     <RazorComponent Remove="MyBusApp.Tests/**" />

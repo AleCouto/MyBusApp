@@ -1,0 +1,202 @@
+@page "/trains"
+@inject IEnumerable<ITrainService> TrainServices
+@inject FavoriteStore FavoriteStore
+@inject MyBusApp.Utils.AppLogger Logger
+
+<PageTitle>Comboios - MyBusApp</PageTitle>
+
+<div class="container mt-4 d-flex flex-column align-items-center">
+    <div class="row border-bottom pb-3 mb-4 w-100">
+        <div class="col text-center">
+            <h1 class="display-5">Comboios</h1>
+            <p class="text-muted">Consulte estações, destinos e próximas partidas.</p>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(favoriteMessage))
+    {
+        <div class="row w-100 justify-content-center">
+            <div class="col-12 col-md-8 col-lg-6">
+                <div class="alert alert-info" role="status">@favoriteMessage</div>
+            </div>
+        </div>
+    }
+
+    <div class="row w-100 justify-content-center">
+        <div class="col-12 col-md-8 col-lg-6 mb-4">
+            <div class="card shadow-sm border-0 bg-light p-3">
+                <div class="mb-3">
+                    <label class="form-label fw-bold text-secondary small text-uppercase">1. Selecione o operador</label>
+                    <select class="form-select form-select-lg" @onchange="OnTrainOperatorSelectedAsync">
+                        <option value="">-- Escolha o operador --</option>
+                        @foreach (var trainService in TrainServices)
+                        {
+                            <option value="@trainService.OperatorName">@trainService.OperatorName</option>
+                        }
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold text-secondary small text-uppercase">2. Selecione a estação</label>
+                    <select class="form-select"
+                            @onchange="OnTrainStationSelectedAsync"
+                            disabled="@(isLoadingTrainStations || selectedTrainService is null)">
+                        <option value="">-- @(isLoadingTrainStations ? "A carregar estações..." : "Escolha a estação") --</option>
+                        @foreach (var station in trainStations)
+                        {
+                            <option value="@station.Id">@station.Name</option>
+                        }
+                    </select>
+                </div>
+                <div>
+                    <label class="form-label fw-bold text-secondary small text-uppercase">3. Selecione o destino</label>
+                    <select class="form-select"
+                            @onchange="OnTrainDirectionSelectedAsync"
+                            disabled="@(isLoadingTrainDirections || selectedTrainStation is null)">
+                        <option value="">-- @(isLoadingTrainDirections ? "A carregar destinos..." : "Escolha o destino") --</option>
+                        @foreach (var direction in trainDirections)
+                        {
+                            <option value="@direction.Id">@direction.Name</option>
+                        }
+                    </select>
+                </div>
+                @if (selectedTrainStation is not null)
+                {
+                    <button class="btn btn-outline-primary mt-3" @onclick="AddTrainFavoriteAsync">
+                        <i class="bi bi-heart me-1" aria-hidden="true"></i>Guardar estação nos favoritos
+                    </button>
+                }
+            </div>
+
+            @if (selectedTrainService is not null && !isLoadingTrainStations && trainStations.Count == 0)
+            {
+                <div class="alert alert-warning mt-3" role="alert">Não existem estações disponíveis para este operador.</div>
+            }
+            else if (selectedTrainStation is not null && !isLoadingTrainDirections && trainDirections.Count == 0)
+            {
+                <div class="alert alert-warning mt-3" role="alert">Não existem destinos disponíveis para esta estação.</div>
+            }
+
+            @if (isLoadingTrainDepartures)
+            {
+                <div class="text-center p-5" role="status">
+                    <div class="spinner-border text-primary"></div>
+                    <p class="mt-3 text-muted">A consultar próximas partidas...</p>
+                </div>
+            }
+            else if (selectedTrainDirection is not null)
+            {
+                <div class="card shadow-sm border-0 mt-3">
+                    <div class="card-body bg-primary text-white rounded-top">
+                        <h4 class="mb-0">@selectedTrainStation?.Name</h4>
+                        <small class="opacity-75">Próximas partidas para @selectedTrainDirection.Name</small>
+                    </div>
+                    <ul class="list-group list-group-flush">
+                        @if (trainDepartures.Count > 0)
+                        {
+                            @foreach (var departure in trainDepartures)
+                            {
+                                <li class="list-group-item d-flex justify-content-between align-items-center py-3">
+                                    <div>
+                                        <span class="badge bg-primary fs-6 px-3">@departure.ServiceName</span>
+                                        <span class="ms-2 text-dark small">@departure.Destination</span>
+                                    </div>
+                                    <h5 class="mb-0 fw-bold">@departure.DisplayTime</h5>
+                                </li>
+                            }
+                        }
+                        else
+                        {
+                            <li class="list-group-item p-5 text-center text-muted">
+                                Sem próximas partidas para esta combinação.
+                            </li>
+                        }
+                    </ul>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private ITrainService? selectedTrainService;
+    private List<TrainStation> trainStations = [];
+    private List<TrainDirection> trainDirections = [];
+    private List<TrainDeparture> trainDepartures = [];
+    private TrainStation? selectedTrainStation;
+    private TrainDirection? selectedTrainDirection;
+    private bool isLoadingTrainStations;
+    private bool isLoadingTrainDirections;
+    private bool isLoadingTrainDepartures;
+    private string? favoriteMessage;
+
+    private async Task AddTrainFavoriteAsync()
+    {
+        if (selectedTrainService is null || selectedTrainStation is null ||
+            !string.Equals(selectedTrainService.OperatorName, "CP", StringComparison.Ordinal))
+            return;
+
+        try
+        {
+            var favorite = new TransitFavorite(
+                FavoriteTransportMode.Train,
+                FavoriteProvider.Cp,
+                selectedTrainStation.Id,
+                selectedTrainStation.Name);
+            favoriteMessage = await FavoriteStore.AddAsync(favorite)
+                ? "Favorito guardado. Consulte-o na página Favoritos."
+                : "Este favorito já está guardado.";
+        }
+        catch (Exception exception) when (exception is JSException or System.Text.Json.JsonException or InvalidDataException)
+        {
+            Logger.Error(nameof(Trains), "Failed to save a train favorite.", exception);
+            favoriteMessage = "Não foi possível guardar o favorito neste browser.";
+        }
+    }
+
+    private async Task OnTrainOperatorSelectedAsync(ChangeEventArgs args)
+    {
+        ResetTrainSearch();
+        favoriteMessage = null;
+        selectedTrainService = TrainServices.FirstOrDefault(service =>
+            string.Equals(service.OperatorName, args.Value?.ToString(), StringComparison.Ordinal));
+        if (selectedTrainService is null) return;
+        isLoadingTrainStations = true;
+        trainStations = await selectedTrainService.GetStationsAsync();
+        isLoadingTrainStations = false;
+    }
+
+    private async Task OnTrainStationSelectedAsync(ChangeEventArgs args)
+    {
+        selectedTrainStation = trainStations.FirstOrDefault(station => station.Id == args.Value?.ToString());
+        selectedTrainDirection = null;
+        trainDirections.Clear();
+        trainDepartures.Clear();
+        if (selectedTrainStation is null || selectedTrainService is null) return;
+        isLoadingTrainDirections = true;
+        trainDirections = await selectedTrainService.GetDestinationsAsync(selectedTrainStation.Id);
+        isLoadingTrainDirections = false;
+    }
+
+    private async Task OnTrainDirectionSelectedAsync(ChangeEventArgs args)
+    {
+        selectedTrainDirection = trainDirections.FirstOrDefault(direction => direction.Id == args.Value?.ToString());
+        trainDepartures.Clear();
+        if (selectedTrainDirection is null || selectedTrainStation is null || selectedTrainService is null) return;
+        isLoadingTrainDepartures = true;
+        trainDepartures = await selectedTrainService.GetDeparturesAsync(selectedTrainStation.Id, selectedTrainDirection.Id);
+        isLoadingTrainDepartures = false;
+    }
+
+    private void ResetTrainSearch()
+    {
+        selectedTrainService = null;
+        selectedTrainStation = null;
+        selectedTrainDirection = null;
+        trainStations.Clear();
+        trainDirections.Clear();
+        trainDepartures.Clear();
+        isLoadingTrainStations = false;
+        isLoadingTrainDirections = false;
+        isLoadingTrainDepartures = false;
+    }
+}

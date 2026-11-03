@@ -1,0 +1,262 @@
+@page "/buses"
+@inject BusServiceRouter BusServiceRouter
+@inject FavoriteStore FavoriteStore
+@inject MyBusApp.Utils.AppLogger Logger
+
+<PageTitle>Autocarros - MyBusApp</PageTitle>
+
+<div class="container mt-4 d-flex flex-column align-items-center">
+    <div class="row border-bottom pb-3 mb-4 w-100">
+        <div class="col text-center">
+            <h1 class="display-5">Autocarros</h1>
+            <p class="text-muted">Consulte linhas, paragens e próximas passagens.</p>
+        </div>
+    </div>
+
+    <div class="row w-100 justify-content-center">
+        <div class="col-12 col-md-8 col-lg-6 mb-4">
+            <div class="input-group shadow-sm">
+                <span class="input-group-text bg-white"><i class="bi bi-search" aria-hidden="true"></i></span>
+                <input class="form-control"
+                       placeholder="Digite o número da linha (ex: 1612)"
+                       @bind="lineNumber"
+                       @onkeyup="@(args => args.Key == "Enter" ? SearchBusAsync() : Task.CompletedTask)" />
+                <button class="btn btn-primary px-4" @onclick="SearchBusAsync" disabled="@isLoadingBus">
+                    @if (isLoadingBus)
+                    {
+                        <span class="spinner-border spinner-border-sm" role="status" aria-label="A pesquisar"></span>
+                    }
+                    else
+                    {
+                        <span>Pesquisar</span>
+                    }
+                </button>
+            </div>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(favoriteMessage))
+    {
+        <div class="row w-100 justify-content-center">
+            <div class="col-12 col-md-8 col-lg-6">
+                <div class="alert alert-info" role="status">@favoriteMessage</div>
+            </div>
+        </div>
+    }
+
+    <div class="row w-100 justify-content-center">
+        <div class="col-12 col-md-8 col-lg-6 mb-4">
+            @if (hasSearchedBus)
+            {
+                if (currentLine is not null)
+                {
+                    <div class="card shadow-sm p-3 border-0 bg-light">
+                        <div class="mb-3">
+                            <label class="form-label fw-bold text-secondary small text-uppercase">1. Selecione o destino</label>
+                            <select class="form-select form-select-lg shadow-sm" @onchange="OnBusDirectionSelectedAsync">
+                                <option value="">-- Escolha o destino --</option>
+                                @foreach (var direction in busDirections)
+                                {
+                                    <option value="@direction.Id">@direction.Name</option>
+                                }
+                            </select>
+                        </div>
+                        <div>
+                            <label class="form-label fw-bold text-secondary small text-uppercase">2. Selecione a paragem</label>
+                            <select class="form-select shadow-sm"
+                                    @onchange="OnBusStopSelectedAsync"
+                                    disabled="@(isFilteringBusStops || !busStops.Any())">
+                                @if (isFilteringBusStops)
+                                {
+                                    <option>A filtrar percurso...</option>
+                                }
+                                else
+                                {
+                                    <option value="">-- @(busStops.Any() ? "Escolha a paragem" : "Selecione o sentido primeiro") --</option>
+                                    @foreach (var stop in busStops)
+                                    {
+                                        <option value="@stop.Id">@stop.Name</option>
+                                    }
+                                }
+                            </select>
+                        </div>
+                    </div>
+                }
+                else if (!isLoadingBus)
+                {
+                    <div class="alert alert-warning border-0 shadow-sm" role="alert">
+                        Linha <strong>@lineNumber</strong> não encontrada.
+                    </div>
+                }
+            }
+
+            @if (isLoadingBusArrivals)
+            {
+                <div class="text-center p-5" role="status">
+                    <div class="spinner-border text-primary"></div>
+                    <p class="mt-3 text-muted">A consultar horários em tempo real...</p>
+                </div>
+            }
+            else if (selectedBusStop is not null)
+            {
+                <div class="card shadow-sm border-0 mt-3">
+                    <div class="card-body bg-primary text-white rounded-top d-flex justify-content-between align-items-center">
+                        <div>
+                            <h4 class="mb-0">@selectedBusStop.Name</h4>
+                            <small class="opacity-75">Próximas passagens</small>
+                        </div>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-sm btn-light"
+                                    @onclick="AddBusFavoriteAsync"
+                                    aria-label="Guardar linha e paragem nos favoritos">
+                                <i class="bi bi-heart me-1" aria-hidden="true"></i>Guardar
+                            </button>
+                            <button class="btn btn-sm btn-light"
+                                    @onclick="RefreshBusArrivalsAsync"
+                                    aria-label="Atualizar chegadas">
+                                <i class="bi bi-arrow-clockwise" aria-hidden="true"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <ul class="list-group list-group-flush">
+                        @if (busArrivals.Count > 0)
+                        {
+                            @foreach (var arrival in busArrivals)
+                            {
+                                <li class="list-group-item d-flex justify-content-between align-items-center py-3">
+                                    <div>
+                                        <span class="badge bg-primary fs-6 px-3">@arrival.LineNumber</span>
+                                        <span class="ms-2 text-dark small">@arrival.Destination</span>
+                                    </div>
+                                    <div class="text-end">
+                                        <h5 class="mb-0 fw-bold @(arrival.IsRealTime ? "text-success" : "text-dark")">
+                                            @if (arrival.IsRealTime)
+                                            {
+                                                <i class="bi bi-broadcast me-1" aria-hidden="true"></i>
+                                            }
+                                            @arrival.DisplayTime
+                                        </h5>
+                                        <small class="text-muted">@(arrival.IsRealTime ? "Tempo Real" : "Agendado")</small>
+                                    </div>
+                                </li>
+                            }
+                        }
+                        else
+                        {
+                            <li class="list-group-item p-5 text-center text-muted">
+                                Sem previsões de chegada para esta linha agora.
+                            </li>
+                        }
+                    </ul>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private string lineNumber = string.Empty;
+    private BusLine? currentLine;
+    private IBusService? activeBusService;
+    private List<BusDirection> busDirections = [];
+    private List<BusStop> busStops = [];
+    private List<BusArrival> busArrivals = [];
+    private BusStop? selectedBusStop;
+    private bool isLoadingBus;
+    private bool isFilteringBusStops;
+    private bool isLoadingBusArrivals;
+    private bool hasSearchedBus;
+    private string? favoriteMessage;
+
+    private async Task SearchBusAsync()
+    {
+        if (string.IsNullOrWhiteSpace(lineNumber)) return;
+        favoriteMessage = null;
+        isLoadingBus = true;
+        ResetBusSearch();
+        hasSearchedBus = true;
+        var resolved = await BusServiceRouter.ResolveLineAsync(lineNumber);
+        currentLine = resolved.Line;
+        activeBusService = resolved.Service;
+        if (currentLine is not null && activeBusService is not null)
+            busDirections = await activeBusService.GetDirectionsAsync(currentLine.Id);
+        isLoadingBus = false;
+    }
+
+    private async Task OnBusDirectionSelectedAsync(ChangeEventArgs args)
+    {
+        selectedBusStop = null;
+        busArrivals.Clear();
+        busStops.Clear();
+        var directionId = args.Value?.ToString();
+        if (string.IsNullOrEmpty(directionId) || currentLine is null || activeBusService is null) return;
+        isFilteringBusStops = true;
+        busStops = await activeBusService.GetStopsAsync(directionId, currentLine.Id);
+        isFilteringBusStops = false;
+    }
+
+    private async Task OnBusStopSelectedAsync(ChangeEventArgs args)
+    {
+        selectedBusStop = busStops.FirstOrDefault(stop => stop.Id == args.Value?.ToString());
+        if (selectedBusStop is not null) await RefreshBusArrivalsAsync();
+    }
+
+    private async Task RefreshBusArrivalsAsync()
+    {
+        if (selectedBusStop is null || currentLine is null || activeBusService is null) return;
+        isLoadingBusArrivals = true;
+        busArrivals = await activeBusService.GetArrivalsAsync(selectedBusStop.Id, currentLine.Id);
+        isLoadingBusArrivals = false;
+    }
+
+    private async Task AddBusFavoriteAsync()
+    {
+        if (currentLine is null || selectedBusStop is null)
+            return;
+
+        var provider = currentLine.Provider switch
+        {
+            BusProvider.Metropolitana => FavoriteProvider.Metropolitana,
+            BusProvider.CarrisLisboa => FavoriteProvider.CarrisLisboa,
+            BusProvider.Transitland => FavoriteProvider.Transitland,
+            _ => (FavoriteProvider?)null
+        };
+        if (provider is null)
+            return;
+
+        await SaveFavoriteAsync(new TransitFavorite(
+            FavoriteTransportMode.Bus,
+            provider.Value,
+            selectedBusStop.Id,
+            selectedBusStop.Name,
+            currentLine.ShortName));
+    }
+
+    private async Task SaveFavoriteAsync(TransitFavorite favorite)
+    {
+        try
+        {
+            favoriteMessage = await FavoriteStore.AddAsync(favorite)
+                ? "Favorito guardado. Consulte-o na página Favoritos."
+                : "Este favorito já está guardado.";
+        }
+        catch (Exception exception) when (exception is JSException or System.Text.Json.JsonException or InvalidDataException)
+        {
+            Logger.Error(nameof(Buses), "Failed to save a bus favorite.", exception);
+            favoriteMessage = "Não foi possível guardar o favorito neste browser.";
+        }
+    }
+
+    private void ResetBusSearch()
+    {
+        currentLine = null;
+        activeBusService = null;
+        selectedBusStop = null;
+        busDirections.Clear();
+        busStops.Clear();
+        busArrivals.Clear();
+        isFilteringBusStops = false;
+        isLoadingBusArrivals = false;
+        hasSearchedBus = false;
+    }
+}

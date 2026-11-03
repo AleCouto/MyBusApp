@@ -118,6 +118,7 @@ public class CarrisLisboaStaticDataTests
         var arrivals = await service.GetArrivalsAsync("stop-1", "714");
 
         Assert.Equal(2, arrivals.Count);
+        Assert.All(arrivals, arrival => Assert.Equal("714", arrival.LineNumber));
         Assert.DoesNotContain(arrivals, arrival => arrival.Destination == "Past destination");
         Assert.DoesNotContain(arrivals, arrival => arrival.Destination == "Inactive destination");
         Assert.Contains(arrivals, arrival => arrival.Destination == "Overnight destination" && arrival.DisplayTime == "02:00");
