@@ -8,12 +8,26 @@ namespace MyBusApp.Services;
 public sealed class FavoriteStore(IJSRuntime jsRuntime)
 {
     private const string StorageKey = "mybusapp:favorites:v1";
+    private readonly SemaphoreSlim operationGate = new(1, 1);
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         Converters = { new JsonStringEnumConverter() }
     };
 
     public async Task<List<TransitFavorite>> LoadAsync()
+    {
+        await operationGate.WaitAsync();
+        try
+        {
+            return await LoadCoreAsync();
+        }
+        finally
+        {
+            operationGate.Release();
+        }
+    }
+
+    private async Task<List<TransitFavorite>> LoadCoreAsync()
     {
         var json = await jsRuntime.InvokeAsync<string?>("localStorage.getItem", StorageKey);
         if (json is null)
@@ -23,37 +37,64 @@ public sealed class FavoriteStore(IJSRuntime jsRuntime)
             ?? throw new InvalidDataException("The saved favorites document is empty.");
         if (favorites.Any(favorite => !IsValid(favorite)))
             throw new InvalidDataException("The saved favorites document contains an invalid favorite.");
+        if (HasDuplicateFavorites(favorites))
+            throw new InvalidDataException("The saved favorites document contains duplicate favorites.");
 
         return favorites;
     }
 
     public async Task SaveAsync(IReadOnlyCollection<TransitFavorite> favorites)
     {
-        ArgumentNullException.ThrowIfNull(favorites);
-        if (favorites.Any(favorite => !IsValid(favorite)))
-            throw new ArgumentException("The collection contains an invalid favorite.", nameof(favorites));
-
-        var json = JsonSerializer.Serialize(favorites, JsonOptions);
-        await jsRuntime.InvokeVoidAsync("localStorage.setItem", StorageKey, json);
+        await operationGate.WaitAsync();
+        try
+        {
+            await SaveCoreAsync(favorites);
+        }
+        finally
+        {
+            operationGate.Release();
+        }
     }
 
     public async Task<bool> AddAsync(TransitFavorite favorite)
     {
         ArgumentNullException.ThrowIfNull(favorite);
+        if (!IsValid(favorite))
+            throw new ArgumentException("The favorite is invalid.", nameof(favorite));
 
-        var favorites = await LoadAsync();
-        if (favorites.Any(existing => IsSameFavorite(existing, favorite)))
-            return false;
+        await operationGate.WaitAsync();
+        try
+        {
+            var favorites = await LoadCoreAsync();
+            if (favorites.Any(existing => existing.HasSameIdentityAs(favorite)))
+                return false;
 
-        await SaveAsync([.. favorites, favorite]);
-        return true;
+            favorites.Add(favorite);
+            await SaveCoreAsync(favorites);
+            return true;
+        }
+        finally
+        {
+            operationGate.Release();
+        }
     }
 
     public async Task<bool> IsFavoriteAsync(TransitFavorite favorite)
     {
         ArgumentNullException.ThrowIfNull(favorite);
-        var favorites = await LoadAsync();
-        return favorites.Any(existing => IsSameFavorite(existing, favorite));
+        if (!IsValid(favorite))
+            throw new ArgumentException("The favorite is invalid.", nameof(favorite));
+
+        await operationGate.WaitAsync();
+        try
+        {
+            var favorites = await LoadCoreAsync();
+            return favorites.Any(existing => existing.HasSameIdentityAs(favorite));
+        }
+        finally
+        {
+            operationGate.Release();
+        }
     }
 
     public async Task<bool> SetFavoriteAsync(TransitFavorite favorite, bool isFavorite)
@@ -62,25 +103,45 @@ public sealed class FavoriteStore(IJSRuntime jsRuntime)
         if (!IsValid(favorite))
             throw new ArgumentException("The favorite is invalid.", nameof(favorite));
 
-        var favorites = await LoadAsync();
-        var index = favorites.FindIndex(existing => IsSameFavorite(existing, favorite));
-        if (isFavorite)
+        await operationGate.WaitAsync();
+        try
         {
-            if (index >= 0)
-                return true;
+            var favorites = await LoadCoreAsync();
+            var index = favorites.FindIndex(existing => existing.HasSameIdentityAs(favorite));
+            if (isFavorite)
+            {
+                if (index >= 0)
+                    return true;
 
-            favorites.Add(favorite);
+                favorites.Add(favorite);
+            }
+            else
+            {
+                if (index < 0)
+                    return false;
+
+                favorites.RemoveAt(index);
+            }
+
+            await SaveCoreAsync(favorites);
+            return isFavorite;
         }
-        else
+        finally
         {
-            if (index < 0)
-                return false;
-
-            favorites.RemoveAt(index);
+            operationGate.Release();
         }
+    }
 
-        await SaveAsync(favorites);
-        return isFavorite;
+    private async Task SaveCoreAsync(IReadOnlyCollection<TransitFavorite> favorites)
+    {
+        ArgumentNullException.ThrowIfNull(favorites);
+        if (favorites.Any(favorite => !IsValid(favorite)))
+            throw new ArgumentException("The collection contains an invalid favorite.", nameof(favorites));
+        if (HasDuplicateFavorites(favorites))
+            throw new ArgumentException("The collection contains duplicate favorites.", nameof(favorites));
+
+        var json = JsonSerializer.Serialize(favorites, JsonOptions);
+        await jsRuntime.InvokeVoidAsync("localStorage.setItem", StorageKey, json);
     }
 
     private static bool IsValid(TransitFavorite favorite)
@@ -96,17 +157,28 @@ public sealed class FavoriteStore(IJSRuntime jsRuntime)
         {
             FavoriteTransportMode.Bus =>
                 favorite.Provider != FavoriteProvider.Cp &&
-                !string.IsNullOrWhiteSpace(favorite.LineNumber),
+                !string.IsNullOrWhiteSpace(favorite.LineNumber) &&
+                favorite.DestinationId is null,
             FavoriteTransportMode.Train =>
                 favorite.Provider == FavoriteProvider.Cp &&
-                string.IsNullOrWhiteSpace(favorite.LineNumber),
+                string.IsNullOrWhiteSpace(favorite.LineNumber) &&
+                (favorite.DestinationId is null || !string.IsNullOrWhiteSpace(favorite.DestinationId)),
             _ => false
         };
     }
 
-    private static bool IsSameFavorite(TransitFavorite left, TransitFavorite right)
-        => left.Mode == right.Mode &&
-           left.Provider == right.Provider &&
-           string.Equals(left.StopId, right.StopId, StringComparison.Ordinal) &&
-           string.Equals(left.LineNumber, right.LineNumber, StringComparison.Ordinal);
+    private static bool HasDuplicateFavorites(IReadOnlyCollection<TransitFavorite> favorites)
+    {
+        var items = favorites.ToArray();
+        for (var index = 0; index < items.Length; index++)
+        {
+            for (var candidateIndex = index + 1; candidateIndex < items.Length; candidateIndex++)
+            {
+                if (items[index].HasSameIdentityAs(items[candidateIndex]))
+                    return true;
+            }
+        }
+
+        return false;
+    }
 }

@@ -1,74 +1,128 @@
 @using System.Text.Json
+@using Microsoft.JSInterop
 @using MyBusApp.Utils
+@implements IAsyncDisposable
 @inject FavoriteStore FavoriteStore
 @inject BusServiceRouter BusServiceRouter
 @inject IEnumerable<ITrainService> TrainServices
 @inject AppLogger Logger
+@inject IJSRuntime JS
+@inject IConfiguration Configuration
+@inject TimeProvider TimeProvider
 
 <section class="row w-100 justify-content-center mb-4" aria-labelledby="favorites-heading">
     <div class="col-12 col-lg-10">
         <div class="d-flex justify-content-between align-items-center mb-3">
             <h2 id="favorites-heading" class="h4 mb-0">Próximas partidas dos favoritos</h2>
-            <button class="btn btn-outline-primary btn-sm" @onclick="RefreshAsync" disabled="@isLoading">
+            <button class="btn btn-outline-primary btn-sm" @onclick="RefreshAsync" disabled="@(!hasLoadedFavorites || isLoading)">
                 <i class="bi bi-arrow-clockwise me-1" aria-hidden="true"></i>Atualizar
             </button>
         </div>
 
         @if (!string.IsNullOrWhiteSpace(storageError))
         {
-            <div class="alert alert-warning" role="alert">@storageError</div>
+            <div class="alert alert-warning" role="alert">
+                @storageError
+                @if (!hasLoadedFavorites && !isLoading)
+                {
+                    <div class="mt-2">
+                        <button class="btn btn-outline-warning btn-sm"
+                                aria-label="Tentar novamente carregar favoritos"
+                                @onclick="RetryLoadFavoritesAsync">
+                            Tentar novamente
+                        </button>
+                    </div>
+                }
+            </div>
         }
         @if (!string.IsNullOrWhiteSpace(statusMessage))
         {
             <div class="alert alert-info" role="status">@statusMessage</div>
         }
 
-        @if (isLoading && entries.Count == 0)
+        @if (!hasLoadedFavorites && isLoading)
         {
             <div class="text-center p-4" role="status">
                 <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
                 A carregar favoritos...
             </div>
         }
-        else if (entries.Count == 0)
+        else if (hasLoadedFavorites && entries.Count == 0)
         {
             <div class="alert alert-light border text-muted" role="status">
                 Ainda não guardou favoritos. Pesquise uma linha ou estação e guarde a paragem ou estação que utiliza.
             </div>
         }
-        else
+        else if (hasLoadedFavorites)
         {
             <div class="d-flex flex-column gap-3">
                 @for (var index = 0; index < entries.Count; index++)
                 {
                     var entry = entries[index];
                     <article @key="entry.Favorite" class="card shadow-sm">
-                        <div class="card-header d-flex justify-content-between align-items-center gap-2">
-                            <div>
-                                <h3 class="h6 mb-1">@GetFavoriteTitle(entry.Favorite)</h3>
-                                <small class="text-muted">@GetProviderName(entry.Favorite.Provider) · @GetModeName(entry.Favorite.Mode)</small>
+                        <div class="card-header d-flex justify-content-between gap-2 @(entry.Favorite.Mode == FavoriteTransportMode.Bus ? "flex-column flex-lg-row align-items-start align-items-lg-center" : "align-items-center")">
+                            <div class="flex-grow-1">
+                                @if (entry.Favorite.Mode == FavoriteTransportMode.Bus)
+                                {
+                                    <div class="d-flex flex-column flex-sm-row gap-2 gap-sm-4">
+                                        <div>
+                                            <small class="text-muted">Linha</small>
+                                            <div class="fw-semibold">@(string.IsNullOrWhiteSpace(entry.Favorite.LineNumber) ? "Indisponível" : entry.Favorite.LineNumber)</div>
+                                        </div>
+                                        <div>
+                                            <small class="text-muted">Paragem</small>
+                                            <div class="fw-semibold text-break">@(string.IsNullOrWhiteSpace(entry.Favorite.StopName) ? "Indisponível" : entry.Favorite.StopName)</div>
+                                        </div>
+                                    </div>
+                                    <small class="text-muted">@GetProviderName(entry.Favorite.Provider) · @GetModeName(entry.Favorite.Mode)</small>
+                                }
+                                else if (entry.Favorite.Mode == FavoriteTransportMode.Train)
+                                {
+                                    <h3 class="h6 mb-1">@entry.Favorite.StopName</h3>
+                                    <small class="text-muted">
+                                        Estação ·
+                                        @(entry.Favorite.DestinationId is null
+                                            ? "Destino por selecionar (favorito antigo)"
+                                            : $"Destino: {entry.DestinationName ?? "Indisponível"}")
+                                    </small>
+                                    <div><small class="text-muted">@GetProviderName(entry.Favorite.Provider) · @GetModeName(entry.Favorite.Mode)</small></div>
+                                }
+                                else
+                                {
+                                    <h3 class="h6 mb-1">@GetFavoriteTitle(entry)</h3>
+                                    <small class="text-muted">@GetProviderName(entry.Favorite.Provider) · @GetModeName(entry.Favorite.Mode)</small>
+                                }
+                                <div class="mt-2">
+                                    <a class="btn btn-outline-primary btn-sm"
+                                       href="@GetFavoriteUrl(entry)"
+                                       aria-label="Ver mais partidas para @GetFavoriteTitle(entry)">
+                                        Ver mais partidas
+                                    </a>
+                                </div>
                             </div>
-                            <div class="d-flex gap-1">
+                            <div class="d-flex gap-1 flex-shrink-0 @(entry.Favorite.Mode == FavoriteTransportMode.Bus ? "align-self-end align-self-lg-center" : "")">
                                 <button class="btn btn-outline-secondary btn-sm"
                                         title="Mover favorito para cima"
-                                        aria-label="Mover @GetFavoriteTitle(entry.Favorite) para cima"
+                                        aria-label="Mover @GetFavoriteTitle(entry) para cima"
                                         disabled="@(index == 0 || isLoading)"
                                         @onclick="() => MoveAsync(entry.Favorite, -1)">
-                                    <i class="bi bi-arrow-up" aria-hidden="true"></i>
+                                    <span aria-hidden="true">↑</span>
+                                    <span class="ms-1">Subir</span>
                                 </button>
                                 <button class="btn btn-outline-secondary btn-sm"
                                         title="Mover favorito para baixo"
-                                        aria-label="Mover @GetFavoriteTitle(entry.Favorite) para baixo"
+                                        aria-label="Mover @GetFavoriteTitle(entry) para baixo"
                                         disabled="@(index == entries.Count - 1 || isLoading)"
                                         @onclick="() => MoveAsync(entry.Favorite, 1)">
-                                    <i class="bi bi-arrow-down" aria-hidden="true"></i>
+                                    <span aria-hidden="true">↓</span>
+                                    <span class="ms-1">Descer</span>
                                 </button>
                                 <button class="btn btn-outline-danger btn-sm"
                                         title="Remover favorito"
-                                        aria-label="Remover @GetFavoriteTitle(entry.Favorite)"
+                                        aria-label="Remover @GetFavoriteTitle(entry)"
                                         disabled="@isLoading"
                                         @onclick="() => RemoveAsync(entry.Favorite)">
-                                    <i class="bi bi-trash" aria-hidden="true"></i>
+                                    Remover
                                 </button>
                             </div>
                         </div>
@@ -81,7 +135,21 @@
                         }
                         else
                         {
-                            @if (entry.State == FavoriteQueryState.Loading)
+                            @if (entry.State == FavoriteQueryState.LegacyNeedsDestination)
+                            {
+                                <div class="card-body text-warning">
+                                    Este favorito antigo não guarda um destino. Selecione a estação e o destino para criar um favorito específico.
+                                    <div><a href="/trains">Selecionar estação e destino</a></div>
+                                </div>
+                            }
+                            else if (entry.State == FavoriteQueryState.DestinationUnavailable)
+                            {
+                                <div class="card-body text-warning" role="alert">
+                                    O destino guardado já não está disponível na fonte. Selecione novamente a estação e o destino.
+                                    <div><a href="/trains">Selecionar estação e destino</a></div>
+                                </div>
+                            }
+                            else if (entry.State == FavoriteQueryState.Loading)
                             {
                                 <div class="card-body text-muted" role="status">
                                     <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
@@ -123,9 +191,9 @@
                                     @foreach (var arrival in entry.BusArrivals)
                                     {
                                         <li class="list-group-item d-flex justify-content-between align-items-center gap-2">
-                                            <div>
-                                                <span class="badge bg-primary">@arrival.LineNumber</span>
-                                                <span class="ms-2">@arrival.Destination</span>
+                                            <div class="flex-grow-1">
+                                                <small class="text-muted">Destino</small>
+                                                <div class="text-break">@(string.IsNullOrWhiteSpace(arrival.Destination) ? "Indisponível" : arrival.Destination)</div>
                                             </div>
                                             <div class="text-end">
                                                 <strong class="@(arrival.IsRealTime ? "text-success" : "text-dark")">
@@ -177,45 +245,135 @@
     private List<TransitFavorite> favorites = [];
     private List<FavoriteEntry> entries = [];
     private bool isLoading = true;
+    private bool hasLoadedFavorites;
     private string? storageError;
     private string? statusMessage;
+    private TimeSpan refreshInterval;
+    private CancellationTokenSource? periodicRefreshCancellation;
+    private Task? periodicRefreshTask;
+    private IJSObjectReference? visibilityModule;
+    private DotNetObjectReference<FavoritesDashboard>? componentReference;
+    private bool isDocumentActive;
+    private bool isRefreshInProgress;
+    private bool isDisposed;
 
     protected override async Task OnInitializedAsync()
     {
+        var refreshIntervalSeconds = Configuration.GetValue<int>("FavoritesDashboard:RefreshIntervalSeconds");
+        if (refreshIntervalSeconds <= 0)
+            throw new InvalidOperationException("FavoritesDashboard:RefreshIntervalSeconds must be greater than zero.");
+        refreshInterval = TimeSpan.FromSeconds(refreshIntervalSeconds);
+
+        await LoadFavoritesAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || isDisposed)
+            return;
+
         try
         {
-            favorites = await FavoriteStore.LoadAsync();
-            await LoadEntriesAsync();
+            visibilityModule = await JS.InvokeAsync<IJSObjectReference>("import", "./js/favoritesDashboard.js");
+            componentReference = DotNetObjectReference.Create(this);
+            isDocumentActive = await visibilityModule.InvokeAsync<bool>("observeVisibility", componentReference);
+            SynchronizePeriodicRefresh();
         }
-        catch (Exception exception) when (exception is JSException or JsonException or InvalidDataException)
+        catch (JSException exception)
         {
-            Logger.Error(nameof(FavoritesDashboard), "Failed to load saved favorites.", exception);
-            storageError = "Não foi possível carregar os favoritos guardados neste browser.";
-        }
-        finally
-        {
-            isLoading = false;
+            Logger.Error(nameof(FavoritesDashboard), "Failed to observe document visibility for automatic refresh.", exception);
+            statusMessage = "A atualização automática não está disponível neste momento.";
+            await InvokeAsync(StateHasChanged);
         }
     }
+
+    [JSInvokable]
+    public Task SetDocumentVisibilityAsync(bool isActive)
+        => InvokeAsync(() =>
+        {
+            if (isDisposed)
+                return;
+
+            isDocumentActive = isActive;
+            SynchronizePeriodicRefresh();
+        });
 
     private async Task RefreshAsync()
     {
         statusMessage = null;
-        await LoadEntriesAsync();
+        await RefreshEntriesAsync();
     }
 
-    private async Task LoadEntriesAsync()
+    private async Task RetryLoadFavoritesAsync()
+    {
+        if (hasLoadedFavorites || isLoading || isDisposed)
+            return;
+
+        await LoadFavoritesAsync();
+    }
+
+    private async Task LoadFavoritesAsync()
     {
         isLoading = true;
-        var previousEntries = entries;
-        entries = favorites
-            .Select(favorite => previousEntries.FirstOrDefault(entry => IsSameFavorite(entry.Favorite, favorite))
-                ?? new FavoriteEntry(favorite))
-            .ToList();
-        await InvokeAsync(StateHasChanged);
-        await Task.WhenAll(entries.Select(LoadFavoriteAsync));
-        isLoading = false;
-        await InvokeAsync(StateHasChanged);
+        storageError = null;
+        statusMessage = null;
+        try
+        {
+            var loadedFavorites = await FavoriteStore.LoadAsync();
+            favorites = loadedFavorites;
+            hasLoadedFavorites = true;
+            await RefreshEntriesAsync();
+            SynchronizePeriodicRefresh();
+        }
+        catch (JSException exception)
+        {
+            Logger.Error(nameof(FavoritesDashboard), "Failed to access saved favorites in browser storage.", exception);
+            storageError = "Não foi possível aceder aos favoritos guardados neste browser. Os dados existentes não foram alterados.";
+        }
+        catch (JsonException exception)
+        {
+            Logger.Error(nameof(FavoritesDashboard), "Saved favorites contain invalid JSON.", exception);
+            storageError = "Os favoritos guardados têm um formato JSON inválido. Os dados existentes foram preservados.";
+        }
+        catch (InvalidDataException exception)
+        {
+            Logger.Error(nameof(FavoritesDashboard), "Saved favorites contain invalid or duplicate data.", exception);
+            storageError = exception.Message.Contains("duplicate favorites", StringComparison.Ordinal)
+                ? "Foram encontrados favoritos duplicados. Os dados existentes foram preservados e não foram carregados."
+                : "Os favoritos guardados contêm dados inválidos. Os dados existentes foram preservados e não foram carregados.";
+        }
+        finally
+        {
+            isLoading = false;
+            if (!isDisposed)
+                await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task RefreshEntriesAsync()
+    {
+        if (isDisposed || isRefreshInProgress)
+            return;
+
+        isRefreshInProgress = true;
+        isLoading = true;
+        try
+        {
+            var previousEntries = entries;
+            entries = favorites
+                .Select(favorite => previousEntries.FirstOrDefault(entry => entry.Favorite.HasSameIdentityAs(favorite))
+                    ?? new FavoriteEntry(favorite))
+                .ToList();
+            await InvokeAsync(StateHasChanged);
+            await Task.WhenAll(entries.Select(LoadFavoriteAsync));
+        }
+        finally
+        {
+            isRefreshInProgress = false;
+            isLoading = false;
+            if (!isDisposed)
+                await InvokeAsync(StateHasChanged);
+        }
     }
 
     private async Task LoadFavoriteAsync(FavoriteEntry entry)
@@ -230,6 +388,8 @@
                     throw new InvalidDataException("The saved bus favorite context is invalid.");
 
                 var resolved = await BusServiceRouter.ResolveLineAsync(provider.Value, entry.Favorite.LineNumber);
+                if (isDisposed)
+                    return;
                 if (resolved.Line is null || resolved.Service is null)
                 {
                     entry.State = FavoriteQueryState.Unavailable;
@@ -237,6 +397,8 @@
                 }
 
                 var arrivals = await resolved.Service.GetArrivalsAsync(entry.Favorite.StopId, resolved.Line.Id);
+                if (isDisposed)
+                    return;
                 entry.BusArrivals = arrivals;
                 SetSuccessfulState(entry, arrivals.Count > 0);
                 return;
@@ -250,31 +412,123 @@
                 return;
             }
 
-            var directions = await trainService.GetDestinationsAsync(entry.Favorite.StopId);
-            var departuresByDirection = await Task.WhenAll(directions.Select(direction =>
-                trainService.GetDeparturesAsync(entry.Favorite.StopId, direction.Id)));
-            var departures = departuresByDirection
-                .SelectMany(departures => departures)
+            if (entry.Favorite.DestinationId is null)
+            {
+                entry.State = FavoriteQueryState.LegacyNeedsDestination;
+                return;
+            }
+
+            var destination = (await trainService.GetDestinationsAsync(entry.Favorite.StopId))
+                .FirstOrDefault(candidate => string.Equals(
+                    candidate.Id,
+                    entry.Favorite.DestinationId,
+                    StringComparison.Ordinal));
+            if (isDisposed)
+                return;
+            if (destination is null)
+            {
+                entry.DestinationName = null;
+                entry.State = FavoriteQueryState.DestinationUnavailable;
+                return;
+            }
+
+            entry.DestinationName = GetTrainDestinationName(destination.Name);
+            var departures = await trainService.GetDeparturesAsync(
+                entry.Favorite.StopId,
+                entry.Favorite.DestinationId);
+            if (isDisposed)
+                return;
+            var sortedDepartures = departures
                 .OrderBy(departure => GetMinutesUntil(departure.DisplayTime))
                 .Take(5)
                 .ToList();
-            entry.TrainDepartures = departures;
-            SetSuccessfulState(entry, departures.Count > 0);
+            entry.TrainDepartures = sortedDepartures;
+            SetSuccessfulState(entry, sortedDepartures.Count > 0);
         }
         catch (TransitSourceUnavailableException exception)
         {
+            if (isDisposed)
+                return;
             Logger.Warning(nameof(FavoritesDashboard), $"Source unavailable for favorite '{entry.Favorite.StopName}': {exception.Message}");
             entry.State = FavoriteQueryState.Unavailable;
         }
         catch (Exception exception)
         {
+            if (isDisposed)
+                return;
             Logger.Error(nameof(FavoritesDashboard), $"Failed to load favorite '{entry.Favorite.StopName}'.", exception);
             entry.State = FavoriteQueryState.Error;
         }
         finally
         {
-            await InvokeAsync(StateHasChanged);
+            if (!isDisposed)
+                await InvokeAsync(StateHasChanged);
         }
+    }
+
+    private void SynchronizePeriodicRefresh()
+    {
+        if (isDisposed || !isDocumentActive || favorites.Count == 0)
+        {
+            StopPeriodicRefresh();
+            return;
+        }
+
+        if (periodicRefreshCancellation is not null)
+            return;
+
+        periodicRefreshCancellation = new CancellationTokenSource();
+        periodicRefreshTask = RunPeriodicRefreshAsync(periodicRefreshCancellation);
+    }
+
+    private async Task RunPeriodicRefreshAsync(CancellationTokenSource cancellation)
+    {
+        try
+        {
+            while (true)
+            {
+                await Task.Delay(refreshInterval, TimeProvider, cancellation.Token);
+                if (isDisposed || !isDocumentActive || favorites.Count == 0)
+                    return;
+
+                await InvokeAsync(() =>
+                {
+                    if (!isDisposed && isDocumentActive && favorites.Count > 0)
+                        _ = RefreshAutomaticallyAsync();
+                });
+            }
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            if (ReferenceEquals(periodicRefreshCancellation, cancellation))
+            {
+                periodicRefreshCancellation = null;
+                periodicRefreshTask = null;
+            }
+            cancellation.Dispose();
+        }
+    }
+
+    private async Task RefreshAutomaticallyAsync()
+    {
+        try
+        {
+            await RefreshEntriesAsync();
+        }
+        catch (Exception exception)
+        {
+            Logger.Error(nameof(FavoritesDashboard), "Automatic refresh failed.", exception);
+        }
+    }
+
+    private void StopPeriodicRefresh()
+    {
+        var cancellation = periodicRefreshCancellation;
+        periodicRefreshCancellation = null;
+        cancellation?.Cancel();
     }
 
     private static void SetSuccessfulState(FavoriteEntry entry, bool hasDepartures)
@@ -287,7 +541,7 @@
 
     private async Task RemoveAsync(TransitFavorite favorite)
     {
-        var index = favorites.FindIndex(existing => IsSameFavorite(existing, favorite));
+        var index = favorites.FindIndex(existing => existing.HasSameIdentityAs(favorite));
         if (index < 0 || index >= favorites.Count)
         {
             statusMessage = "A lista de favoritos mudou; atualize a página e tente novamente.";
@@ -301,7 +555,7 @@
 
     private async Task MoveAsync(TransitFavorite favorite, int offset)
     {
-        var index = favorites.FindIndex(existing => IsSameFavorite(existing, favorite));
+        var index = favorites.FindIndex(existing => existing.HasSameIdentityAs(favorite));
         var newIndex = index + offset;
         if (index < 0 || index >= favorites.Count || newIndex < 0 || newIndex >= favorites.Count)
         {
@@ -323,20 +577,20 @@
         {
             await FavoriteStore.SaveAsync(updated);
             favorites = updated;
-            await LoadEntriesAsync();
+            await RefreshEntriesAsync();
+            SynchronizePeriodicRefresh();
         }
         catch (JSException exception)
         {
             Logger.Error(nameof(FavoritesDashboard), "Failed to persist favorites in browser storage.", exception);
-            storageError = "Não foi possível guardar a alteração dos favoritos neste browser.";
+            storageError = "Não foi possível guardar a alteração dos favoritos neste browser. A lista apresentada mantém os dados anteriores.";
+        }
+        catch (ArgumentException exception)
+        {
+            Logger.Error(nameof(FavoritesDashboard), "Rejected an invalid favorite change.", exception);
+            storageError = "A alteração dos favoritos é inválida ou contém duplicados. A lista apresentada mantém os dados anteriores.";
         }
     }
-
-    private static bool IsSameFavorite(TransitFavorite left, TransitFavorite right)
-        => left.Mode == right.Mode &&
-           left.Provider == right.Provider &&
-           string.Equals(left.StopId, right.StopId, StringComparison.Ordinal) &&
-           string.Equals(left.LineNumber, right.LineNumber, StringComparison.Ordinal);
 
     private static BusProvider? GetBusProvider(FavoriteProvider provider)
         => provider switch
@@ -347,10 +601,41 @@
             _ => null
         };
 
-    private static string GetFavoriteTitle(TransitFavorite favorite)
-        => favorite.Mode == FavoriteTransportMode.Bus
-            ? $"{favorite.LineNumber} · {favorite.StopName}"
-            : favorite.StopName;
+    private static string GetFavoriteTitle(FavoriteEntry entry)
+    {
+        var favorite = entry.Favorite;
+        if (favorite.Mode == FavoriteTransportMode.Bus)
+            return $"{favorite.LineNumber} · {favorite.StopName}";
+
+        var destination = favorite.DestinationId is null
+            ? "destino por selecionar"
+            : entry.DestinationName ?? "destino indisponível";
+        return $"{favorite.StopName} · {destination}";
+    }
+
+    private static string GetFavoriteUrl(FavoriteEntry entry)
+    {
+        var favorite = entry.Favorite;
+        if (favorite.Mode == FavoriteTransportMode.Bus)
+        {
+            return $"/buses?provider={Uri.EscapeDataString(favorite.Provider.ToString())}" +
+                   $"&line={Uri.EscapeDataString(favorite.LineNumber ?? string.Empty)}" +
+                   $"&stop={Uri.EscapeDataString(favorite.StopId)}";
+        }
+
+        var trainUrl = $"/trains?station={Uri.EscapeDataString(favorite.StopId)}";
+        return favorite.DestinationId is null
+            ? trainUrl
+            : $"{trainUrl}&destination={Uri.EscapeDataString(favorite.DestinationId)}";
+    }
+
+    private static string GetTrainDestinationName(string directionName)
+    {
+        var destinationSeparator = directionName.LastIndexOf(" → ", StringComparison.Ordinal);
+        return destinationSeparator >= 0
+            ? directionName[(destinationSeparator + 3)..]
+            : directionName;
+    }
 
     private static string GetProviderName(FavoriteProvider provider)
         => provider switch
@@ -404,6 +689,8 @@
     private enum FavoriteQueryState
     {
         Loading,
+        LegacyNeedsDestination,
+        DestinationUnavailable,
         NoDepartures,
         WithDepartures,
         Unavailable,
@@ -415,7 +702,56 @@
         public TransitFavorite Favorite { get; } = favorite;
         public FavoriteQueryState State { get; set; } = FavoriteQueryState.Loading;
         public FavoriteQueryState? LastSuccessfulState { get; set; }
+        public string? DestinationName { get; set; }
         public List<BusArrival> BusArrivals { get; set; } = [];
         public List<TrainDeparture> TrainDepartures { get; set; } = [];
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (isDisposed)
+            return;
+
+        isDisposed = true;
+        isDocumentActive = false;
+        StopPeriodicRefresh();
+
+        var refreshTask = periodicRefreshTask;
+        if (refreshTask is not null)
+            await refreshTask;
+        periodicRefreshTask = null;
+
+        if (visibilityModule is not null)
+        {
+            try
+            {
+                await visibilityModule.InvokeVoidAsync("stopObservingVisibility");
+            }
+            catch (JSDisconnectedException exception)
+            {
+                Logger.Warning(nameof(FavoritesDashboard), $"Could not remove the document visibility listener: {exception.Message}");
+            }
+            catch (JSException exception)
+            {
+                Logger.Error(nameof(FavoritesDashboard), "Failed to remove the document visibility listener.", exception);
+            }
+            finally
+            {
+                componentReference?.Dispose();
+                try
+                {
+                    await visibilityModule.DisposeAsync();
+                }
+                catch (JSDisconnectedException exception)
+                {
+                    Logger.Warning(nameof(FavoritesDashboard), $"Could not release the document visibility module: {exception.Message}");
+                }
+                visibilityModule = null;
+            }
+        }
+        else
+        {
+            componentReference?.Dispose();
+        }
     }
 }

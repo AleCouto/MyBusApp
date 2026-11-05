@@ -19,6 +19,7 @@ builder.Configuration.GetSection("Apis").Bind(apiSettings);
 // registar ApiSettings como singleton
 builder.Services.AddSingleton(apiSettings);
 builder.Services.AddSingleton<AppLogger>();
+builder.Services.AddSingleton(TimeProvider.System);
 
 // Carris Metropolitana — serviço primário
 builder.Services.AddScoped<IBusService, CarrisMetropolitanaService>();

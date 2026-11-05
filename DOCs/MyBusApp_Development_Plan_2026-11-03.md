@@ -118,12 +118,78 @@ condicionar a arquitetura nem atrasar o objetivo principal.
 -   Não criar operadores, horários ou previsões fictícias.
 -   Não fazer stage, commit, reset, checkout ou revert sem autorização
     explícita.
--   A persistência dos favoritos deve ser decidida após inspeção da
-    aplicação. Não introduzir backend ou autenticação apenas para
-    guardar favoritos sem necessidade demonstrada.
--   Os favoritos devem guardar identificadores estáveis do provider ou
-    fonte técnica e da paragem/estação, não depender apenas do nome
-    apresentado.
+-   Os favoritos são persistidos no `localStorage` do navegador. Nesta
+    fase, não existe sincronização entre navegadores ou dispositivos.
+-   Os favoritos usam identificadores definidos por modo: autocarros
+    usam provider, número público da linha e `StopId`; comboios usam
+    provider, `StationId` e `DestinationId` (`TrainDirection.Id`). Os
+    nomes apresentados não são identificadores.
+
+### 3.1 Decisões aprovadas para favoritos (M8)
+
+1. **Identidade dos favoritos de autocarro:** `Provider + número público
+   da linha + StopId`. O provider integra a identidade; o nome da
+   paragem não é usado como identificador; a mesma paragem pode ser
+   guardada em linhas diferentes.
+2. **Renomeação:** não são permitidos aliases nem nomes personalizados.
+   Os nomes apresentados são provenientes dos dados da fonte.
+3. **Persistência:** manter `localStorage` no navegador. Não está
+   prevista sincronização entre navegadores ou dispositivos nesta fase.
+4. **Dashboard:** a página inicial `/` continua a ser o Dashboard de
+   favoritos e o ponto de entrada principal da aplicação.
+5. **Identidade ferroviária preservada:** `Provider + StationId +
+   DestinationId`, sendo `DestinationId` o `TrainDirection.Id`. Os
+   favoritos CP antigos sem destino continuam identificados como
+   legados; não se infere nem atribui automaticamente um destino.
+6. **Separação dos serviços preservada:** `IBusService` e
+   `ITrainService` permanecem separados; `BusServiceRouter` continua
+   limitado aos autocarros.
+
+**Limitação técnica a tratar no M11:** a pesquisa Transitland pode
+selecionar o primeiro resultado quando existem várias linhas com o
+mesmo número público. Isto não altera a identidade de favorito aprovada;
+a resolução ambígua deve ser analisada na revisão dos fluxos manuais de
+autocarro, sem presumir que está resolvida.
+
+### 3.2 Indisponibilidade e estados de consulta — decisões aprovadas (M8)
+
+| Situação | Comportamento aprovado |
+|---|---|
+| Provider responde com partidas | Apresentar as partidas recebidas. |
+| Provider responde corretamente sem partidas | Apresentar «Sem partidas disponíveis». |
+| Provider indisponível ou falha de comunicação | Apresentar «Serviço temporariamente indisponível». |
+| Dataset inexistente, inválido ou inacessível | Apresentar «Dados indisponíveis». |
+| Uma fonte falha, mas outras favoritas funcionam | Isolar a falha e manter os resultados das favoritas que funcionaram. |
+| A atualização falha, mas existem resultados anteriores válidos | Preservar os resultados anteriores e informar que a atualização falhou. |
+
+Regras complementares aprovadas:
+
+- Não apresentar dados fictícios ou inventar partidas.
+- Não transformar falhas numa lista vazia.
+- Não apagar favoritos devido a falhas do provider.
+- Não substituir automaticamente dados válidos por dados incompletos.
+- Quando não existir fonte alternativa válida, informar claramente a
+  indisponibilidade.
+
+| Estado funcional | Significado |
+|---|---|
+| A carregar | Consulta em execução; mostrar indicador de carregamento. |
+| Partidas disponíveis | Apresentar partidas, horários e destino, indicando a origem temporal dos dados. |
+| Sem partidas | Consulta bem-sucedida sem partidas para o contexto selecionado. |
+| Serviço indisponível | Falha de comunicação ou fonte indisponível. |
+| Dados indisponíveis | Dataset inexistente, inválido ou inacessível. |
+| Horário agendado | Dados provenientes de horários programados, não de informação em tempo real. |
+| Atualização falhou | Preservar resultados anteriores válidos e informar que não foi possível atualizá-los. |
+
+Regras semânticas aprovadas:
+
+- «Sem partidas» não é um erro.
+- «Horário agendado» não é um erro nem um estado de carregamento;
+  identifica a natureza dos dados.
+- Não apresentar dados antigos como atuais sem indicar que são
+  resultados anteriores.
+- Distinguir sempre informação em tempo real de informação agendada.
+- Não expor mensagens técnicas brutas ao utilizador.
 
 ## 4. Estado conhecido do projeto
 
@@ -219,6 +285,129 @@ frequência, cobertura, formato e redistribuição devem ser verificados.
     apresentação visual dos estados durante uma consulta continua por
     validar manualmente. M8 e M10 permanecem incompletos.
 
+**Registo --- M10.1, atualização periódica do dashboard**
+
+-   [x] Atualização periódica configurada em
+    `FavoritesDashboard:RefreshIntervalSeconds`, com intervalo inicial de
+    300 segundos (5 minutos), para limitar chamadas a fontes com
+    capacidades e limites diferentes; ajustar após validar limites
+    específicos de cada fonte.
+-   [x] A atualização manual e a automática reutilizam a mesma consulta
+    e uma proteção comum impede sobreposição.
+-   [x] Atualizações automáticas param com o documento oculto ou o
+    componente descartado e retomam quando o documento volta a estar
+    visível; não há timer ativo sem favoritos.
+-   [x] Testes do dashboard com tempo controlado, suite completa (66) e
+    `dotnet build` concluídos sem falhas; módulo de visibilidade carregado
+    no browser.
+-   **Limitação:** os contratos dos serviços não aceitam tokens de
+    cancelamento; uma consulta ao provider já em curso não pode ser
+    interrompida. Após descarte, a sua conclusão é ignorada e não
+    agenda novas consultas. M10 permanece incompleto; faltam validar
+    partidas reais no dashboard e estados no browser.
+
+**Registo --- alinhamento da estrela de favoritos em Comboios**
+
+-   A estrela CP foi movida para o cabeçalho do cartão de partidas,
+    alinhada à direita junto ao nome da estação, seguindo a estrutura
+    do cabeçalho de Autocarros. Antes de escolher um destino, mantém-se
+    junto à identificação da estação para preservar a disponibilidade
+    atual de adicionar/remover o favorito.
+-   O componente partilhado `FavoriteStar` e os handlers existentes
+    continuam a controlar o estado e a operação do favorito.
+-   Testes automatizados (66) e build concluídos sem falhas; a
+    validação visual no browser ficou limitada ao carregamento inicial,
+    pois não foi possível concluir o carregamento das estações CP no
+    ambiente local.
+-   M8 e M10 permanecem incompletos.
+
+**Registo de 2026-11-05 --- identificação dos favoritos de autocarros**
+
+-   O dashboard identifica separadamente **Linha** (`TransitFavorite.LineNumber`)
+    e **Paragem** (`TransitFavorite.StopName`); cada partida identifica
+    **Destino** com `BusArrival.Destination`, sem inferir o destino a
+    partir da linha.
+-   Um destino em falta é apresentado como **Indisponível**. Os horários,
+    os indicadores **Tempo real**/**Agendado**, e as ações de ordenar e
+    remover favoritos foram preservados. Os campos e ações adaptam-se a
+    larguras menores; não foi necessário CSS adicional.
+-   Testes do dashboard (5), suite completa (66) e `dotnet build`
+    concluídos sem falhas; build com 0 avisos e 0 erros.
+-   Validação visual local em desktop e mobile confirmou os rótulos e a
+    adaptação dos controlos. A consulta do favorito temporário de
+    verificação recebeu HTTP 400 devido ao ID de paragem de teste; por
+    isso, a apresentação visual de partidas reais não foi comprovada.
+    Testes com serviço controlado cobrem destino presente e ausente.
+-   M8 e M10 permanecem incompletos.
+
+**Registo de 2026-11-05 --- identificação dos controlos dos favoritos**
+
+-   Os controlos que pareciam caixas vazias são botões HTML de mover
+    para cima (`MoveAsync`), mover para baixo (`MoveAsync`) e remover
+    (`RemoveAsync`), presentes no cabeçalho dos cartões de todos os
+    modos. Não são checkboxes e não estão duplicados.
+-   Os botões mantêm os eventos e labels acessíveis; o conteúdo visual
+    foi tornado explícito como **↑ Subir**, **↓ Descer** e **Remover**.
+    A causa era o uso de classes `bi-*` sem stylesheet Bootstrap Icons
+    carregado pela aplicação. A estrela (`FavoriteStar`) não foi
+    alterada.
+-   Testes do dashboard (5), suite completa (66) e build concluídos sem
+    falhas; build com 0 avisos e 0 erros. Revisão visual local confirmou
+    a presença dos controlos identificados em desktop e mobile; a
+    consulta real de partidas não foi validada nesta tarefa.
+-   M8 e M10 permanecem incompletos.
+
+**Esclarecimento de 2026-11-05 --- controlo branco no resultado de Autocarros**
+
+-   No screenshot do resultado da pesquisa, o controlo branco imediatamente
+    depois da estrela é um botão HTML funcional de atualização das chegadas,
+    associado a `RefreshBusArrivalsAsync`; não é um checkbox nem um controlo
+    residual. A função foi mantida e o botão recebeu um ícone acessível de
+    duas setas circulares, com dimensões iguais às da estrela, substituindo
+    o botão retangular. O rótulo acessível e tooltip continuam a identificar
+    a ação; a estrela não foi alterada.
+-   O build passou sem avisos nem erros. A validação visual no browser
+    não foi concluída nesta alteração porque a página carregou, mas o
+    controlo de pesquisa não atualizou o estado da aplicação. A suite
+    completa não foi executada.
+
+**Registo de 2026-11-05 --- favoritos CP por estação e destino**
+
+-   A identidade dos favoritos CP passou a ser provider + ID da estação
+    + `TrainDirection.Id` do destino. A identidade dos favoritos de
+    autocarros não foi alterada. O ID usado é o mesmo aceite por
+    `GetDeparturesAsync(stationId, directionId)`; o texto apresentado
+    nunca é usado como identidade.
+-   `TransitFavorite.DestinationId` é opcional para manter a leitura de
+    JSON antigo. A chave `mybusapp:favorites:v1` não mudou. Favoritos CP
+    antigos sem destino permanecem guardados, são identificados como
+    necessitando de nova seleção e não disparam consultas agregadas nem
+    recebem um destino inferido. O utilizador pode removê-los ou seguir
+    para `/trains` e guardar uma combinação específica; favoritos de
+    autocarro são preservados.
+-   Em Comboios, a estrela só aparece após a seleção de estação e
+    destino, e representa essa combinação. Foi posicionada no cabeçalho
+    azul das partidas, junto à estação e ao destino, seguindo o padrão
+    visual da página Autocarros, em vez de ficar junto aos dropdowns. A
+    lista e o cabeçalho apresentam o destino terminal da direção; o
+    dashboard resolve o nome da direção guardada e consulta partidas
+    apenas pelo ID persistido.
+    Destinos indisponíveis são indicados sem consultar outros sentidos.
+-   Testes de store, página e dashboard (15 focados; 71 na suite
+    completa) passaram. `dotnet build` passou com 0 avisos e 0 erros.
+    `git -c core.whitespace=cr-at-eol diff --check` passou, respeitando
+    as terminações CRLF existentes.
+-   Validação manual em browser com dados CP: Abrantes → Entroncamento
+    e Abrantes → Lisboa Santa Apolonia foram guardados e exibidos como
+    favoritos independentes, com partidas agendadas; remover Lisboa
+    manteve Entroncamento. Os favoritos temporários foram removidos no
+    fim. A lista real apresenta “Lisboa Santa Apolonia” como destino
+    (não o rótulo literal “Abrantes → Lisboa”); há mais de uma direção
+    com esse destino e cada uma tem ID próprio. Não foi feita validação
+    em dispositivo físico nem verificação independente da consola após
+    o build final.
+-   M8 e M10 permanecem incompletos.
+
 **Limitação atual:** Metro e Barcos existem como opções de navegação,
 mas ainda não têm integrações reais. Não apresentar a opção na interface
 como disponibilidade de horários.
@@ -235,8 +424,11 @@ como disponibilidade de horários.
 4.  Se não existirem previsões válidas, recorrer ao horário programado
     aplicável, quando exista.
 5.  Apresentar horários programados como **Agendado**.
-6.  Se nenhuma fonte tiver dados válidos, apresentar **Indisponível** ou
-    mensagem adequada à ausência de partidas.
+6.  Se nenhuma fonte tiver dados válidos, distinguir uma resposta
+    bem-sucedida sem partidas (**Sem partidas disponíveis**), uma falha
+    de provider/comunicação (**Serviço temporariamente indisponível**) e
+    um dataset inexistente, inválido ou inacessível (**Dados
+    indisponíveis**), conforme as decisões aprovadas na secção 3.2.
 
 ### 5.2 Integridade dos dados
 
@@ -273,67 +465,193 @@ A prioridade é entregar primeiro a experiência de favoritos e consulta
 rápida usando os operadores já integrados. A expansão de fontes,
 realtime e automação deve apoiar essa experiência.
 
-### \[ \] M8 --- Auditoria funcional e desenho da experiência de favoritos
+### \[X\] M8 --- Auditoria funcional e desenho da experiência de favoritos
 
 **Objetivo:** perceber como os serviços e páginas atuais podem alimentar
 uma página inicial centrada nos favoritos, sem alterar prematuramente os
 contratos existentes.
 
--   [ ] Ler instruções e skills do projeto.
--   [ ] Inspecionar navegação, páginas, componentes e fluxos atuais de
+-   [x] Ler instruções e skills do projeto.
+-   [x] Inspecionar navegação, páginas, componentes e fluxos atuais de
     autocarros e comboios.
--   [ ] Mapear como cada serviço resolve uma paragem/estação e obtém
+-   [x] Mapear como cada serviço resolve uma paragem/estação e obtém
     próximas partidas.
--   [ ] Identificar IDs estáveis disponíveis para operador,
-    paragem/estação, linha e direção.
--   [ ] Identificar diferenças entre favoritos de autocarros e comboios.
--   [ ] Definir conteúdo mínimo de um favorito: modo, operador/provider,
-    identificador estável, nome apresentado e metadados necessários para
-    reabrir a consulta.
--   [ ] Avaliar persistência compatível com a arquitetura atual,
-    incluindo armazenamento local no browser, sem decidir
-    antecipadamente por dependência ou backend.
--   [ ] Definir comportamento para favoritos cujo operador ou dataset
-    esteja temporariamente indisponível.
--   [ ] Desenhar a página inicial: favoritos ordenáveis e próximas
-    partidas por local.
--   [ ] Definir como adicionar, remover, renomear e reordenar favoritos.
--   [ ] Definir estados de carregamento, atualização, erro, ausência de
-    partidas e dados agendados.
--   [ ] Registar decisões, lacunas e proposta de implementação.
+-   [x] Identificar IDs estáveis disponíveis para provider, número
+    público da linha e `StopId` em autocarros, e provider, `StationId` e
+    `TrainDirection.Id` em comboios. A ambiguidade de resolução
+    Transitland permanece como limitação técnica registada acima.
+-   [x] Identificar diferenças entre favoritos de autocarros e comboios.
+-   [x] Definir conteúdo mínimo de um favorito: modo, provider, IDs de
+    identidade e nome apresentado pela fonte; autocarros guardam também
+    o número público da linha e comboios o `DestinationId`.
+-   [x] Avaliar a persistência compatível: `localStorage` no navegador,
+    sem sincronização nesta fase e sem backend.
+-   [x] Definir e aprovar o comportamento para favoritos cujo provider
+    ou dataset esteja indisponível, incluindo isolamento de falhas e
+    preservação de resultados anteriores válidos.
+-   [x] Definir a página inicial `/` como Dashboard principal, com
+    favoritos ordenáveis e próximas partidas por local; os detalhes de
+    navegação para consulta contextual permanecem no M10.
+-   [x] Definir como adicionar, remover e reordenar favoritos e aprovar
+    que não há renomeação nem aliases personalizados.
+-   [x] Definir e aprovar os estados de consulta, incluindo carregamento,
+    partidas disponíveis, ausência de partidas, indisponibilidade,
+    dados indisponíveis, horário agendado e falha de atualização.
+-   [x] Registar as decisões aprovadas, as lacunas e a proposta de
+    continuidade neste plano e no relatório de auditoria.
 
-**Critérios:** especificação funcional e técnica aprovada; IDs
-necessários identificados; estratégia de persistência justificada;
-nenhuma alteração de código nesta auditoria.
+**Critérios de conclusão:** IDs necessários identificados e estratégia
+de persistência justificada; decisões de produto, indisponibilidade e
+estados de consulta aprovadas e registadas. Estes critérios de auditoria
+e especificação estão satisfeitos e M8 fica concluído. Este fecho não
+significa que as decisões estejam implementadas ou visualmente
+validadas; essas verificações pertencem aos marcos de implementação
+correspondentes. A resolução ambígua Transitland está registada para
+análise no M11. A auditoria não altera código.
 
 **Fora do âmbito:** GPS, rotas, backend ou abstrações universais.
 
-### \[ \] M9 --- Modelo e persistência dos favoritos
+### \[X\] M9 --- Modelo e persistência dos favoritos
 
 **Objetivo:** permitir guardar e recuperar paragens e estações
 frequentes.
 
--   [ ] Implementar o modelo mínimo de favorito aprovado em M8.
--   [ ] Implementar a persistência escolhida em M8, privilegiando a
+-   [x] Implementar o modelo mínimo de favorito aprovado em M8.
+-   [x] Implementar a persistência escolhida em M8, privilegiando a
     solução mais simples compatível.
--   [ ] Permitir adicionar um local aos favoritos a partir dos fluxos de
+-   [x] Permitir adicionar um local aos favoritos a partir dos fluxos de
     pesquisa existentes.
--   [ ] Permitir remover favoritos.
--   [ ] Permitir alterar o nome apresentado, se aprovado.
--   [ ] Permitir reordenar favoritos.
--   [ ] Preservar ordem e dados após recarregar/reabrir a aplicação.
--   [ ] Tratar dados guardados inválidos, versões antigas ou referências
+-   [x] Permitir remover favoritos.
+-   [x] Preservar os nomes fornecidos pela fonte; não permitir aliases
+    nem nomes personalizados.
+-   [x] Permitir reordenar favoritos.
+-   [x] Preservar ordem e dados após recarregar/reabrir a aplicação.
+-   [x] Tratar dados guardados inválidos, versões antigas ou referências
     inexistentes.
--   [ ] Evitar duplicados em favoritos de autocarro quando coincidirem
-    provider, linha e identificador da paragem; para comboios, considerar
-    provider e identificador da estação.
--   [ ] Permitir guardar a mesma paragem associada a linhas diferentes.
--   [ ] Não usar apenas o nome apresentado para identificar um favorito.
--   [ ] Adicionar testes de persistência, ordenação, duplicados, remoção
+-   [x] Evitar duplicados em favoritos de autocarro quando coincidirem
+    provider, linha e identificador da paragem; para comboios, exigir
+    igualdade de provider, ID da estação e `TrainDirection.Id` do
+    destino. Favoritos CP antigos sem `DestinationId` são legados e não
+    recebem destino por inferência.
+-   [x] Permitir guardar a mesma paragem associada a linhas diferentes.
+-   [x] Não usar apenas o nome apresentado para identificar um favorito.
+-   [x] Adicionar testes de persistência, ordenação, duplicados, remoção
     e dados inválidos.
 
 **Critérios:** o utilizador consegue guardar, organizar e recuperar
 locais favoritos; testes cobrem os casos principais.
+
+#### \[X\] M9.1 --- Integridade e unicidade dos favoritos
+
+-   [x] Centralizar a comparação em
+    `TransitFavorite.HasSameIdentityAs`, ignorando nomes e outros campos
+    descritivos.
+-   [x] Preservar as identidades aprovadas em M8: autocarros por
+    provider, número público da linha e `StopId`; comboios CP por
+    provider, `StationId` e `DestinationId` (`TrainDirection.Id`).
+-   [x] Serializar, com `SemaphoreSlim`, `AddAsync`, `SetFavoriteAsync`,
+    `SaveAsync`, `LoadAsync` e `IsFavoriteAsync` dentro da mesma
+    instância de `FavoriteStore`.
+-   [x] Fazer `SaveAsync` rejeitar listas com favoritos duplicados.
+-   [x] Fazer `LoadAsync` detetar duplicados existentes e falhar
+    explicitamente sem eliminar nem modificar o JSON original.
+-   [x] Preservar compatibilidade com favoritos CP antigos sem
+    `DestinationId`, sem inferir destino.
+-   [x] Confirmar `FavoriteStore` registado como Scoped em `Program.cs`.
+-   [x] Testes focados de persistência: 14 aprovados.
+-   [x] Suite completa: 77 aprovados.
+-   [x] `dotnet build`: 0 avisos e 0 erros.
+-   [x] `git diff --check`: aprovado.
+
+**Limitação:** favoritos duplicados já existentes no `localStorage`
+impedem o carregamento normal até serem resolvidos; o JSON original é
+preservado. O fluxo visual de recuperação ainda não foi implementado.
+
+#### \[X\] M9.2 --- Tratamento de erros de persistência
+
+-   [x] O Dashboard distingue carregamento, lista vazia e falha de
+    leitura; a falha apresenta uma mensagem adequada e permite nova
+    tentativa.
+-   [x] Uma falha de leitura não apaga nem sobrescreve os dados
+    existentes.
+-   [x] Remoção e reordenação só atualizam o estado visual depois de
+    `SaveAsync` concluir com sucesso; uma falha de escrita preserva a
+    lista anterior e informa o utilizador.
+-   [x] A sincronização de operações implementada em M9.1 foi
+    preservada.
+-   [x] Testes focados: 27 aprovados.
+-   [x] Suite completa: 84 aprovados.
+-   [x] `dotnet build`: 0 avisos e 0 erros.
+-   [x] Check de whitespace dos três ficheiros alterados: aprovado.
+-   [x] `git diff --check` global com `core.whitespace=cr-at-eol`:
+    aprovado.
+
+**Nota de validação:** o `git diff --check` global sem a opção
+`core.whitespace=cr-at-eol` assinalou a terminação CRLF de uma linha
+preexistente em `Program.cs`. `Program.cs` não foi alterado na tarefa
+M9.2; a verificação com a configuração compatível com CRLF foi aprovada.
+
+**Limitações:** dados inválidos ou duplicados continuam preservados no
+`localStorage`, mas não são carregados. Não foi introduzida recuperação
+automática nem eliminação de dados; o fluxo visual de recuperação de
+favoritos duplicados ainda não foi implementado.
+
+#### \[X\] M9.3 --- Testes de identidade e compatibilidade
+
+-   [x] Cobrir as regras de identidade dos favoritos de autocarro e
+    comboio CP, incluindo nomes descritivos diferentes e destinos
+    distintos.
+-   [x] Testar favoritos CP legados sem `DestinationId` em conjunto com
+    favoritos com destino específico.
+-   [x] Testar dados inválidos, JSON inválido, enums desconhecidos e
+    preservação do conteúdo persistido perante falhas de validação.
+-   [x] Confirmar que favoritos permanecem guardados quando as
+    referências de linha, paragem ou destino deixam de estar disponíveis.
+-   [x] Testes focados: 34 aprovados.
+-   [x] Suite completa: 90 aprovados.
+-   [x] `dotnet build`: 0 avisos e 0 erros.
+
+**Limitação:** não existe teste dedicado à página Buses; os
+comportamentos relevantes foram cobertos através do `FavoriteStore` e
+do Dashboard.
+
+#### \[X\] M9.4 --- Interações do dashboard e persistência
+
+-   [x] Testar remoção e reordenação de favoritos através do Dashboard.
+-   [x] Confirmar a persistência da ordem e a recuperação da lista ao
+    recarregar o Dashboard.
+-   [x] Confirmar a preservação dos restantes favoritos, incluindo
+    favoritos CP legados sem destino.
+-   [x] Confirmar que a interface só reflete a remoção após a gravação
+    bem-sucedida e preserva o estado anterior enquanto a gravação está
+    pendente ou falha.
+-   [x] Testes focados: 35 aprovados.
+-   [x] Suite completa: 92 aprovados.
+-   [x] `dotnet build`: 0 avisos e 0 erros.
+
+**Limitação de validação:** o `git diff --check` global sem configuração
+específica assinala a terminação CRLF preexistente em `Program.cs`; a
+verificação global com `core.whitespace=cr-at-eol` foi aprovada.
+
+#### \[X\] M9.5 --- Validação funcional manual no browser
+
+-   [x] Adicionar favoritos de autocarro e comboio CP a partir dos
+    respetivos fluxos de pesquisa e confirmar a sua apresentação no
+    Dashboard.
+-   [x] Reordenar favoritos e confirmar a persistência da ordem após
+    recarregar a página.
+-   [x] Remover favoritos e confirmar que os restantes são preservados
+    após recarga.
+-   [x] Confirmar a compatibilidade com favorito CP legado sem destino:
+    apresentado como necessitando de seleção, sem inferência automática.
+-   [x] Executar os cenários em browser com viewport desktop de
+    1280 x 800 e mobile de 390 x 844, usando uma origem local isolada
+    para os dados de teste.
+
+**Limitação:** a monitorização da consola e dos pedidos HTTP não cobriu
+continuamente todos os passos iniciais. Nos passos monitorizados não
+foram observados erros de consola, falhas de pedidos ou respostas HTTP
+com estado igual ou superior a 400.
 
 ### \[ \] M10 --- Página inicial com próximas partidas dos favoritos
 
@@ -344,31 +662,42 @@ habituais e os próximos horários disponíveis.
 -   [ ] Mostrar cada favorito com nome e modo; apresentar o operador real
     apenas quando estiver identificado e validado.
 -   [ ] Consultar automaticamente as próximas partidas de cada favorito.
--   [ ] Manter a consulta agregada das partidas CP por estação e
-    apresentar claramente o destino em cada partida, sem agrupar por
-    direção nesta fase nem alterar desnecessariamente o serviço CP.
+-   [ ] Para cada favorito CP com destino, consultar apenas as partidas
+    do `TrainDirection.Id` guardado e apresentar claramente estação,
+    destino, partidas e estado dos horários. Não agregar destinos.
+-   [ ] Identificar favoritos CP antigos sem destino como necessitando
+    de nova seleção; não consultar todos os sentidos nem inferir um
+    destino.
 -   [ ] Mostrar partidas sem misturar incorretamente serviços ou
     direções.
 -   [ ] Mostrar hora prevista/programada e tempo restante quando os
     dados permitirem calculá-lo.
 -   [ ] Identificar cada resultado como Tempo real ou Agendado.
--   [ ] Disponibilizar atualização manual e atualização periódica
-    automática com intervalo prudente, definido durante a implementação
-    conforme as capacidades e limitações das fontes; não assumir que
+-   [x] Disponibilizar atualização manual e atualização periódica
+    automática configurável (300 segundos por omissão), sem assumir que
     todos os providers suportam realtime.
--   [ ] Evitar consultas de atualização simultâneas ou sobrepostas.
--   [ ] Suspender a atualização periódica enquanto a página não estiver
+-   [x] Evitar consultas de atualização simultâneas ou sobrepostas.
+-   [x] Suspender a atualização periódica enquanto a página não estiver
     ativa ou estiver em segundo plano.
 -   [x] Isolar falhas: um favorito indisponível não deve impedir os
     restantes de carregar.
 -   [ ] Mostrar estados distintos para carregamento, sem partidas,
     indisponibilidade e erro.
--   [ ] Permitir abrir o favorito para consultar mais partidas e
+-   [x] Permitir abrir o favorito para consultar mais partidas e
     detalhes.
 -   [ ] Garantir comportamento responsivo em dispositivos móveis e
     desktop.
 -   [ ] Validar manualmente favoritos de autocarros e comboios já
     integrados.
+
+**Evidências do critério de navegação:** «Ver mais partidas» abre a
+pesquisa de autocarros preservando fornecedor, linha e paragem, e a
+pesquisa CP preservando estação e destino. Favoritos CP legados abrem
+com a estação selecionada, sem inferência de destino. Foram aprovados
+16 testes focados e 95 testes no total; o build terminou com 0 avisos e
+0 erros. A validação manual foi aprovada em desktop (1280 x 800) e
+mobile (390 x 844); os favoritos permaneceram guardados ao regressar ao
+Dashboard. Não foram observados erros nas sequências monitorizadas.
 
 **Critérios:** abrir a aplicação permite ver próximas partidas sem
 repetir pesquisas; falhas num favorito não bloqueiam os restantes;
@@ -381,6 +710,9 @@ com acesso direto às próximas partidas.
 
 -   [ ] Rever os fluxos atuais de pesquisa de autocarros e comboios à
     luz do objetivo de consulta rápida.
+-   [ ] Analisar a resolução de linhas Transitland quando vários
+    resultados partilham o mesmo número público; preservar a identidade
+    aprovada dos favoritos de autocarro.
 -   [ ] Reduzir passos desnecessários entre selecionar linha/estação,
     direção/destino, paragem e ver partidas.
 -   [ ] Permitir adicionar aos favoritos uma paragem/estação selecionada
@@ -635,14 +967,12 @@ programados, desde que isso fique explícito.
 
 ## 10. Próximo passo
 
-**M8 --- Auditoria funcional e desenho da experiência de favoritos.**
+**M9 concluído — M9.1, integridade e unicidade; M9.2, tratamento de
+erros de persistência; M9.3, testes de identidade e compatibilidade;
+M9.4, interações do Dashboard e persistência; e M9.5, validação
+funcional manual no browser, concluídos.**
 
-A primeira execução de M8 é exclusivamente de investigação e
-especificação: - Ler instruções e skills do projeto. - Inspecionar os
-fluxos e serviços atuais. - Identificar IDs estáveis necessários para
-guardar paragens e estações. - Avaliar persistência e estratégia de
-carregamento das partidas. - Produzir proposta de experiência e
-critérios de aceitação.
-
-Não modificar código, configurações, datasets ou workflows durante M8. A
-implementação começa após rever e aprovar os resultados da auditoria.
+**Próximo passo do roadmap: M10 — Página inicial com próximas partidas
+dos favoritos.** M10 permanece por iniciar nesta atualização. As
+limitações de recuperação de favoritos duplicados permanecem registadas
+nas secções M9.1 e M9.2.

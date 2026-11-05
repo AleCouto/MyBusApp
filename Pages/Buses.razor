@@ -2,6 +2,7 @@
 @inject BusServiceRouter BusServiceRouter
 @inject FavoriteStore FavoriteStore
 @inject MyBusApp.Utils.AppLogger Logger
+@inject NavigationManager NavigationManager
 
 <PageTitle>Autocarros - MyBusApp</PageTitle>
 
@@ -61,7 +62,9 @@
                     <div class="card shadow-sm p-3 border-0 bg-light">
                         <div class="mb-3">
                             <label class="form-label fw-bold text-secondary small text-uppercase">1. Selecione o destino</label>
-                            <select class="form-select form-select-lg shadow-sm" @onchange="OnBusDirectionSelectedAsync">
+                            <select class="form-select form-select-lg shadow-sm"
+                                    value="@selectedBusDirection?.Id"
+                                    @onchange="OnBusDirectionSelectedAsync">
                                 <option value="">-- Escolha o destino --</option>
                                 @foreach (var direction in busDirections)
                                 {
@@ -72,6 +75,7 @@
                         <div>
                             <label class="form-label fw-bold text-secondary small text-uppercase">2. Selecione a paragem</label>
                             <select class="form-select shadow-sm"
+                                    value="@selectedBusStop?.Id"
                                     @onchange="OnBusStopSelectedAsync"
                                     disabled="@(isFilteringBusStops || !busStops.Any())">
                                 @if (isFilteringBusStops)
@@ -118,10 +122,13 @@
                                                               IsFavorite="@isBusFavorite"
                                                               Disabled="@(!isBusFavoriteStateLoaded || isUpdatingBusFavorite)"
                                                               OnClick="ToggleBusFavoriteAsync" />
-                            <button class="btn btn-sm btn-light"
+                            <button class="refresh-arrivals-button"
                                     @onclick="RefreshBusArrivalsAsync"
-                                    aria-label="Atualizar chegadas">
-                                <i class="bi bi-arrow-clockwise" aria-hidden="true"></i>
+                                    aria-label="Atualizar chegadas"
+                                    title="Atualizar chegadas">
+                                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                    <path d="M5 8a7 7 0 0 1 12-3l3 2-3 3M19 16a7 7 0 0 1-12 3l-3-2 3-3" />
+                                </svg>
                             </button>
                         </div>
                     </div>
@@ -168,6 +175,7 @@
     private List<BusDirection> busDirections = [];
     private List<BusStop> busStops = [];
     private List<BusArrival> busArrivals = [];
+    private BusDirection? selectedBusDirection;
     private BusStop? selectedBusStop;
     private bool isLoadingBus;
     private bool isFilteringBusStops;
@@ -178,8 +186,54 @@
     private bool isUpdatingBusFavorite;
     private string? favoriteMessage;
     private string? queryMessage;
+    private string? loadedFavoriteRoute;
 
-    private async Task SearchBusAsync()
+    protected override async Task OnParametersSetAsync()
+    {
+        var query = NavigationManager.ToAbsoluteUri(NavigationManager.Uri).Query;
+        var providerQuery = GetQueryValue(query, "provider");
+        var lineQuery = GetQueryValue(query, "line");
+        var stopQuery = GetQueryValue(query, "stop");
+        if (string.IsNullOrWhiteSpace(providerQuery) ||
+            string.IsNullOrWhiteSpace(lineQuery) ||
+            string.IsNullOrWhiteSpace(stopQuery))
+            return;
+
+        var routeKey = $"{providerQuery}|{lineQuery}|{stopQuery}";
+        if (string.Equals(routeKey, loadedFavoriteRoute, StringComparison.Ordinal))
+            return;
+        loadedFavoriteRoute = routeKey;
+
+        if (!Enum.TryParse<BusProvider>(providerQuery, true, out var provider) ||
+            !Enum.IsDefined(provider))
+        {
+            queryMessage = "O fornecedor do favorito não é válido.";
+            return;
+        }
+
+        lineNumber = lineQuery;
+        await SearchBusAsync(provider, stopQuery);
+    }
+
+    private static string? GetQueryValue(string query, string name)
+    {
+        foreach (var parameter in query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var separator = parameter.IndexOf('=');
+            var key = separator < 0 ? parameter : parameter[..separator];
+            if (!string.Equals(System.Net.WebUtility.UrlDecode(key), name, StringComparison.Ordinal))
+                continue;
+
+            var value = separator < 0 ? string.Empty : parameter[(separator + 1)..];
+            return System.Net.WebUtility.UrlDecode(value);
+        }
+
+        return null;
+    }
+
+    private Task SearchBusAsync() => SearchBusAsync(null, null);
+
+    private async Task SearchBusAsync(BusProvider? provider, string? stopId)
     {
         if (string.IsNullOrWhiteSpace(lineNumber)) return;
         favoriteMessage = null;
@@ -189,11 +243,17 @@
         hasSearchedBus = true;
         try
         {
-            var resolved = await BusServiceRouter.ResolveLineAsync(lineNumber);
+            var resolved = provider is null
+                ? await BusServiceRouter.ResolveLineAsync(lineNumber)
+                : await BusServiceRouter.ResolveLineAsync(provider.Value, lineNumber);
             currentLine = resolved.Line;
             activeBusService = resolved.Service;
             if (currentLine is not null && activeBusService is not null)
+            {
                 busDirections = await activeBusService.GetDirectionsAsync(currentLine.Id);
+                if (stopId is not null)
+                    await SelectBusFavoriteStopAsync(stopId);
+            }
         }
         catch (TransitSourceUnavailableException exception)
         {
@@ -211,9 +271,35 @@
         }
     }
 
+    private async Task SelectBusFavoriteStopAsync(string stopId)
+    {
+        if (currentLine is null || activeBusService is null)
+            return;
+
+        foreach (var direction in busDirections)
+        {
+            var stops = await activeBusService.GetStopsAsync(direction.Id, currentLine.Id);
+            var stop = stops.FirstOrDefault(candidate =>
+                string.Equals(candidate.Id, stopId, StringComparison.Ordinal));
+            if (stop is null)
+                continue;
+
+            selectedBusDirection = direction;
+            busStops = stops;
+            selectedBusStop = stop;
+            await LoadBusFavoriteStateAsync();
+            await RefreshBusArrivalsAsync();
+            return;
+        }
+
+        queryMessage = "A paragem guardada já não está disponível nesta linha.";
+    }
+
     private async Task OnBusDirectionSelectedAsync(ChangeEventArgs args)
     {
         selectedBusStop = null;
+        selectedBusDirection = busDirections.FirstOrDefault(direction =>
+            direction.Id == args.Value?.ToString());
         busArrivals.Clear();
         busStops.Clear();
         var directionId = args.Value?.ToString();
@@ -353,6 +439,7 @@
         queryMessage = null;
         currentLine = null;
         activeBusService = null;
+        selectedBusDirection = null;
         selectedBusStop = null;
         isBusFavorite = false;
         isBusFavoriteStateLoaded = false;
