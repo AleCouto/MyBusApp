@@ -48,11 +48,48 @@ public sealed class CarrisLisboaService : IBusService
     public async Task<List<BusDirection>> GetDirectionsAsync(string lineId)
     {
         var line = await GetLineDataAsync(lineId);
-        return line?.Directions
+        if (line is null) return [];
+
+        var stopsById = line.Stops.ToDictionary(stop => stop.Id, StringComparer.Ordinal);
+        return line.Directions
             .Select(direction => new BusDirection(
                 direction.Id,
-                string.IsNullOrWhiteSpace(direction.Name) ? line.Name : direction.Name))
-            .ToList() ?? [];
+                GetDirectionName(line, direction, stopsById)))
+            .ToList();
+    }
+
+    private static string GetDirectionName(
+        GtfsStaticLine line,
+        GtfsStaticDirection direction,
+        IReadOnlyDictionary<string, GtfsStaticStop> stopsById)
+    {
+        var fallback = string.IsNullOrWhiteSpace(direction.Name) ? line.Name : direction.Name;
+        var separatorIndex = direction.Id.IndexOf('|');
+        var directionKey = separatorIndex >= 0 ? direction.Id[(separatorIndex + 1)..] : direction.Id;
+        var tripIds = line.Trips
+            .Where(trip => trip.RouteId == direction.RouteId && trip.DirectionId == directionKey)
+            .Select(trip => trip.Id)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var sequence = line.StopTimes
+            .Where(stopTime => tripIds.Contains(stopTime.TripId))
+            .GroupBy(stopTime => stopTime.TripId, StringComparer.Ordinal)
+            .Select(group => group.OrderBy(stopTime => stopTime.Sequence).ToList())
+            .OrderByDescending(group => group.Count)
+            .ThenBy(group => string.Join("\u001f", group.Select(stopTime => stopTime.StopId)), StringComparer.Ordinal)
+            .FirstOrDefault();
+
+        if (sequence is null || sequence.Count < 2)
+            return fallback;
+
+        var first = stopsById.GetValueOrDefault(sequence[0].StopId)?.Name;
+        var last = stopsById.GetValueOrDefault(sequence[^1].StopId)?.Name;
+        if (string.IsNullOrWhiteSpace(first) ||
+            string.IsNullOrWhiteSpace(last) ||
+            string.Equals(first, last, StringComparison.Ordinal))
+            return fallback;
+
+        return $"{first} → {last}";
     }
 
     public async Task<List<BusStop>> GetStopsAsync(string directionId, string lineId)
@@ -82,21 +119,27 @@ public sealed class CarrisLisboaService : IBusService
             .ToList();
     }
 
-    public async Task<List<BusArrival>> GetArrivalsAsync(string stopId, string lineId)
+    public async Task<List<BusArrival>> GetArrivalsAsync(string stopId, string lineId, string? directionId = null)
     {
         var line = await GetLineDataAsync(lineId);
         if (line is null) return [];
 
         var lisbonZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Lisbon");
         var now = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, lisbonZone);
-        return GetUpcomingArrivals(line, stopId, now);
+        return GetUpcomingArrivals(line, stopId, now, directionId);
     }
 
     public static List<BusArrival> GetUpcomingArrivals(
         GtfsStaticLine line,
         string stopId,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        string? directionId = null)
     {
+        var filterByDirection = !string.IsNullOrWhiteSpace(directionId);
+        TryParseDirectionId(directionId, out var routeId, out var directionKey);
+        if (filterByDirection && routeId.Length == 0)
+            return [];
+
         var tripsById = line.Trips.ToDictionary(trip => trip.Id, StringComparer.Ordinal);
         var candidates = new List<(DateTime ScheduledAt, GtfsStaticTrip Trip, GtfsStaticStopTime StopTime, int TimeSeconds)>();
 
@@ -107,6 +150,11 @@ public sealed class CarrisLisboaService : IBusService
             {
                 if (!tripsById.TryGetValue(stopTime.TripId, out var trip) ||
                     !IsServiceActive(line, trip.ServiceId, serviceDate))
+                    continue;
+
+                if (filterByDirection &&
+                    (!string.Equals(trip.RouteId, routeId, StringComparison.Ordinal) ||
+                     !string.Equals(trip.DirectionId, directionKey, StringComparison.Ordinal)))
                     continue;
 
                 var timeSeconds = GetScheduledTimeSeconds(stopTime);
@@ -125,6 +173,22 @@ public sealed class CarrisLisboaService : IBusService
                 FormatGtfsTime(candidate.TimeSeconds),
                 false))
             .ToList();
+    }
+
+    private static bool TryParseDirectionId(string? directionId, out string routeId, out string directionKey)
+    {
+        routeId = string.Empty;
+        directionKey = string.Empty;
+        if (string.IsNullOrWhiteSpace(directionId))
+            return true;
+
+        var separator = directionId.IndexOf('|');
+        if (separator <= 0 || separator == directionId.Length - 1)
+            return false;
+
+        routeId = directionId[..separator];
+        directionKey = directionId[(separator + 1)..];
+        return true;
     }
 
     public static bool IsServiceActive(GtfsStaticLine line, string serviceId, DateTime date)

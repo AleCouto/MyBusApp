@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.RenderTree;
 using Microsoft.AspNetCore.Components.Web;
@@ -23,12 +24,12 @@ public sealed class FavoritesDashboardTests
     {
         TransitFavorite[] favorites =
         [
-            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "unavailable", "Paragem indisponível", "4725"),
-            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "error", "Paragem com erro", "4725"),
-            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "empty", "Paragem sem partidas", "4725"),
-            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "working", "Paragem funcional", "4725"),
-            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "missing-destination", "Paragem sem destino", "4725"),
-            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "stop/id&1", "Paragem com ID reservado", "4725")
+            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "unavailable", "Paragem indisponível", "4725", DirectionId: "dir-test"),
+            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "error", "Paragem com erro", "4725", DirectionId: "dir-test"),
+            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "empty", "Paragem sem partidas", "4725", DirectionId: "dir-test"),
+            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "working", "Paragem funcional", "4725", DirectionId: "dir-test"),
+            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "missing-destination", "Paragem sem destino", "4725", DirectionId: "dir-test"),
+            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "stop/id&1", "Paragem com ID reservado", "4725", DirectionId: "dir-test")
         ];
         var json = JsonSerializer.Serialize(favorites, new JsonSerializerOptions
         {
@@ -62,13 +63,14 @@ public sealed class FavoritesDashboardTests
         Assert.Contains("Consulta concluída sem partidas disponíveis.", html);
         Assert.Contains("Destino funcional", html);
         Assert.Contains("Paragem funcional", html);
-        Assert.Contains("href=\"/buses?provider=Metropolitana&amp;line=4725&amp;stop=stop%2Fid%261\"", html);
+        Assert.Contains("href=\"/buses?provider=Metropolitana&amp;line=4725&amp;stop=stop%2Fid%261&amp;direction=dir-test\"", html);
         Assert.Contains("Linha", html);
         Assert.Contains("Destino", html);
         Assert.Contains("Paragem", html);
-        Assert.Contains("Subir", html);
-        Assert.Contains("Descer", html);
-        Assert.Contains("Remover", html);
+        Assert.Contains("para cima", html);
+        Assert.Contains("para baixo", html);
+        Assert.Contains("aria-label=\"Remover", html);
+        Assert.Contains("text-danger", html);
         Assert.Contains("Indisponível", System.Net.WebUtility.HtmlDecode(html));
     }
 
@@ -115,7 +117,7 @@ public sealed class FavoritesDashboardTests
     {
         TransitFavorite[] favorites =
         [
-            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "stop-1", "Paragem A", "4725")
+            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "stop-1", "Paragem A", "4725", DirectionId: "dir-test")
         ];
         var jsModule = new MemoryJsModule();
         await using var provider = CreateProvider(
@@ -153,8 +155,8 @@ public sealed class FavoritesDashboardTests
     {
         TransitFavorite[] favorites =
         [
-            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "stop-1", "Paragem A", "4725"),
-            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "stop-2", "Paragem B", "3710")
+            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "stop-1", "Paragem A", "4725", DirectionId: "dir-test"),
+            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "stop-2", "Paragem B", "3710", DirectionId: "dir-test")
         ];
         var jsModule = new MemoryJsModule();
         await using var provider = CreateProvider(
@@ -192,8 +194,8 @@ public sealed class FavoritesDashboardTests
     {
         TransitFavorite[] favorites =
         [
-            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "stop-1", "Paragem A", "4725"),
-            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "stop-2", "Paragem B", "3710"),
+            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "stop-1", "Paragem A", "4725", DirectionId: "dir-test"),
+            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "stop-2", "Paragem B", "3710", DirectionId: "dir-test"),
             new(FavoriteTransportMode.Train, FavoriteProvider.Cp, "station-1", "Estação antiga")
         ];
         var jsModule = new MemoryJsModule();
@@ -262,8 +264,8 @@ public sealed class FavoritesDashboardTests
     {
         TransitFavorite[] favorites =
         [
-            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "stop-1", "Paragem A", "4725"),
-            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "stop-2", "Paragem B", "3710"),
+            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "stop-1", "Paragem A", "4725", DirectionId: "dir-test"),
+            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "stop-2", "Paragem B", "3710", DirectionId: "dir-test"),
             new(FavoriteTransportMode.Train, FavoriteProvider.Cp, "station-1", "Estação antiga")
         ];
         var jsModule = new MemoryJsModule();
@@ -323,8 +325,8 @@ public sealed class FavoritesDashboardTests
     {
         TransitFavorite[] favorites =
         [
-            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "retained", "Paragem preservada", "4725"),
-            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "working", "Outra paragem", "4725")
+            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "retained", "Paragem preservada", "4725", DirectionId: "dir-test"),
+            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "working", "Outra paragem", "4725", DirectionId: "dir-test")
         ];
         var json = JsonSerializer.Serialize(favorites, new JsonSerializerOptions
         {
@@ -416,9 +418,9 @@ public sealed class FavoritesDashboardTests
         Assert.Contains("Selecionar estação e destino", html);
         Assert.Contains("Destino: Entroncamento", html);
         Assert.Contains("Destino: Lisboa Santa Apolonia", html);
-        Assert.Contains("href=\"/trains?station=abrantes-id&amp;destination=route-entr-on\"", html);
-        Assert.Contains("href=\"/trains?station=abrantes-id&amp;destination=route-abr-lis\"", html);
-        Assert.Contains("href=\"/trains?station=abrantes-id\"", html);
+        Assert.Contains("href=\"/trains?provider=Cp&amp;station=abrantes-id&amp;destination=route-entr-on\"", html);
+        Assert.Contains("href=\"/trains?provider=Cp&amp;station=abrantes-id&amp;destination=route-abr-lis\"", html);
+        Assert.Contains("href=\"/trains?provider=Cp&amp;station=abrantes-id\"", html);
         Assert.DoesNotContain("Destino: Guarda", html);
         Assert.Contains("Ocorreu um erro ao consultar este favorito.", html);
         Assert.Contains("Partida para Entroncamento", html);
@@ -431,8 +433,8 @@ public sealed class FavoritesDashboardTests
     {
         TransitFavorite[] favorites =
         [
-            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "stop-1", "Paragem sem linha", "missing-line"),
-            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "missing-stop", "Paragem indisponível", "4725"),
+            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "stop-1", "Paragem sem linha", "missing-line", DirectionId: "dir-test"),
+            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "missing-stop", "Paragem indisponível", "4725", DirectionId: "dir-test"),
             new(FavoriteTransportMode.Train, FavoriteProvider.Cp, "station-1", "Estação", DestinationId: "missing-destination")
         ];
         var savedJson = JsonSerializer.Serialize(favorites, new JsonSerializerOptions
@@ -466,8 +468,8 @@ public sealed class FavoritesDashboardTests
         var decodedHtml = System.Net.WebUtility.HtmlDecode(html);
         Assert.Contains("Paragem sem linha", decodedHtml);
         Assert.Contains("Paragem indisponível", decodedHtml);
-        Assert.Contains("href=\"/buses?provider=Metropolitana&amp;line=missing-line&amp;stop=stop-1\"", html);
-        Assert.Contains("href=\"/buses?provider=Metropolitana&amp;line=4725&amp;stop=missing-stop\"", html);
+        Assert.Contains("href=\"/buses?provider=Metropolitana&amp;line=missing-line&amp;stop=stop-1&amp;direction=dir-test\"", html);
+        Assert.Contains("href=\"/buses?provider=Metropolitana&amp;line=4725&amp;stop=missing-stop&amp;direction=dir-test\"", html);
         Assert.Contains("O destino guardado já não está disponível na fonte.", decodedHtml);
         Assert.Equal(favorites, await provider.GetRequiredService<FavoriteStore>().LoadAsync());
         Assert.Equal(savedJson, ((MemoryJsRuntime)provider.GetRequiredService<IJSRuntime>()).StoredValue);
@@ -481,7 +483,7 @@ public sealed class FavoritesDashboardTests
         var jsModule = new MemoryJsModule();
         var favorites = new[]
         {
-            new TransitFavorite(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "stop", "Paragem", "4725")
+            new TransitFavorite(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "stop", "Paragem", "4725", DirectionId: "dir-test")
         };
         await using var provider = CreateProvider(favorites, busService, timeProvider, jsModule, 15);
         await using var renderer = new InteractiveTestRenderer(
@@ -531,7 +533,7 @@ public sealed class FavoritesDashboardTests
         var jsModule = new MemoryJsModule();
         var favorites = new[]
         {
-            new TransitFavorite(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "stop", "Paragem", "4725")
+            new TransitFavorite(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "stop", "Paragem", "4725", DirectionId: "dir-test")
         };
         await using var provider = CreateProvider(favorites, busService, timeProvider, jsModule, 15);
         await using var renderer = new InteractiveTestRenderer(
@@ -586,6 +588,242 @@ public sealed class FavoritesDashboardTests
         });
     }
 
+    [Fact]
+    public async Task Dashboard_AsksForDirectionOnLegacyBusFavoritesWithoutQueryingAllDirections()
+    {
+        TransitFavorite[] favorites =
+        [
+            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "legacy-stop", "Paragem antiga", "4725")
+        ];
+        var json = JsonSerializer.Serialize(favorites, new JsonSerializerOptions
+        {
+            Converters = { new JsonStringEnumConverter() }
+        });
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<IConfiguration>(new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["FavoritesDashboard:RefreshIntervalSeconds"] = "300"
+            })
+            .Build());
+        services.AddSingleton<TimeProvider>(TimeProvider.System);
+        services.AddSingleton<IJSRuntime>(new MemoryJsRuntime(json));
+        services.AddSingleton<FavoriteStore>();
+        services.AddSingleton<AppLogger>();
+        var busService = new FavoriteBusService();
+        services.AddSingleton<IBusService>(busService);
+        services.AddSingleton<BusServiceRouter>();
+        await using var provider = services.BuildServiceProvider();
+        await using var renderer = new HtmlRenderer(provider, provider.GetRequiredService<ILoggerFactory>());
+
+        var html = await renderer.Dispatcher.InvokeAsync(async () =>
+        {
+            var component = await renderer.RenderComponentAsync<FavoritesDashboard>();
+            return component.ToHtmlString();
+        });
+
+        var decodedHtml = System.Net.WebUtility.HtmlDecode(html);
+        Assert.Contains("Este favorito antigo não guarda o sentido", decodedHtml);
+        Assert.Contains("Selecionar sentido e paragem", decodedHtml);
+        Assert.Contains("href=\"/buses?provider=Metropolitana&amp;line=4725&amp;stop=legacy-stop\"", html);
+        Assert.Null(busService.GetDirection("legacy-stop"));
+    }
+
+    [Fact]
+    public async Task Dashboard_GroupsDeparturesByDestinationInOneRow()
+    {
+        TransitFavorite[] favorites =
+        [
+            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "grouped", "Paragem agrupada", "4725", DirectionId: "dir-test")
+        ];
+        var json = JsonSerializer.Serialize(favorites, new JsonSerializerOptions
+        {
+            Converters = { new JsonStringEnumConverter() }
+        });
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<IConfiguration>(new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["FavoritesDashboard:RefreshIntervalSeconds"] = "300"
+            })
+            .Build());
+        services.AddSingleton<TimeProvider>(TimeProvider.System);
+        services.AddSingleton<IJSRuntime>(new MemoryJsRuntime(json));
+        services.AddSingleton<FavoriteStore>();
+        services.AddSingleton<AppLogger>();
+        services.AddSingleton<IBusService, FavoriteBusService>();
+        services.AddSingleton<BusServiceRouter>();
+        await using var provider = services.BuildServiceProvider();
+        await using var renderer = new HtmlRenderer(provider, provider.GetRequiredService<ILoggerFactory>());
+
+        var html = await renderer.Dispatcher.InvokeAsync(async () =>
+        {
+            var component = await renderer.RenderComponentAsync<FavoritesDashboard>();
+            return component.ToHtmlString();
+        });
+
+        var decodedHtml = System.Net.WebUtility.HtmlDecode(html);
+        Assert.Single(Regex.Matches(decodedHtml, "Destino agrupado"));
+        Assert.Contains("12:00", decodedHtml);
+        Assert.Contains("12:10", decodedHtml);
+        Assert.Equal(2, Regex.Matches(decodedHtml, "Agendado").Count);
+    }
+
+    [Fact]
+    public async Task Dashboard_LoadsFertagusFavoritesWithTheFertagusService()
+    {
+        TransitFavorite[] favorites =
+        [
+            new(
+                FavoriteTransportMode.Train,
+                FavoriteProvider.Fertagus,
+                "roma-id",
+                "Roma-Areeiro",
+                DestinationId: "Fertagus\u001fA_0|0")
+        ];
+        var json = JsonSerializer.Serialize(favorites, new JsonSerializerOptions
+        {
+            Converters = { new JsonStringEnumConverter() }
+        });
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<IConfiguration>(new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["FavoritesDashboard:RefreshIntervalSeconds"] = "300"
+            })
+            .Build());
+        services.AddSingleton<TimeProvider>(TimeProvider.System);
+        services.AddSingleton<IJSRuntime>(new MemoryJsRuntime(json));
+        services.AddSingleton<FavoriteStore>();
+        services.AddSingleton<AppLogger>();
+        services.AddSingleton<ITrainService>(new FavoriteTrainService());
+        var fertagusService = new FavoriteFertagusService();
+        services.AddSingleton<ITrainService>(fertagusService);
+        services.AddSingleton<BusServiceRouter>();
+        await using var provider = services.BuildServiceProvider();
+        await using var renderer = new HtmlRenderer(provider, provider.GetRequiredService<ILoggerFactory>());
+
+        var html = await renderer.Dispatcher.InvokeAsync(async () =>
+        {
+            var component = await renderer.RenderComponentAsync<FavoritesDashboard>();
+            return component.ToHtmlString();
+        });
+
+        Assert.Equal(["Fertagus\u001fA_0|0"], fertagusService.RequestedDirectionIds);
+        var decodedHtml = System.Net.WebUtility.HtmlDecode(html);
+        Assert.Contains("Destino: Setúbal", decodedHtml);
+        Assert.Contains("Fertagus · Comboios", decodedHtml);
+        Assert.Contains("Partida para Setúbal", decodedHtml);
+    }
+
+    [Fact]
+    public async Task Dashboard_RequestsOnlyTheSavedBusDirectionAndKeepsTheSearchParameters()
+    {
+        TransitFavorite[] favorites =
+        [
+            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "stop-1", "Paragem A", "4725", DirectionId: "4725_0_2"),
+            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "stop-2", "Paragem B", "4725")
+        ];
+        var json = JsonSerializer.Serialize(favorites, new JsonSerializerOptions
+        {
+            Converters = { new JsonStringEnumConverter() }
+        });
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<IConfiguration>(new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["FavoritesDashboard:RefreshIntervalSeconds"] = "300"
+            })
+            .Build());
+        services.AddSingleton<TimeProvider>(TimeProvider.System);
+        services.AddSingleton<IJSRuntime>(new MemoryJsRuntime(json));
+        services.AddSingleton<FavoriteStore>();
+        services.AddSingleton<AppLogger>();
+        var busService = new FavoriteBusService();
+        services.AddSingleton<IBusService>(busService);
+        services.AddSingleton<BusServiceRouter>();
+        await using var provider = services.BuildServiceProvider();
+        await using var renderer = new HtmlRenderer(provider, provider.GetRequiredService<ILoggerFactory>());
+
+        var html = await renderer.Dispatcher.InvokeAsync(async () =>
+        {
+            var component = await renderer.RenderComponentAsync<FavoritesDashboard>();
+            return component.ToHtmlString();
+        });
+
+        Assert.Equal("4725_0_2", busService.GetDirection("stop-1"));
+        Assert.Null(busService.GetDirection("stop-2"));
+        Assert.Contains(
+            "href=\"/buses?provider=Metropolitana&amp;line=4725&amp;stop=stop-1&amp;direction=4725_0_2\"",
+            html);
+        Assert.Contains(
+            "href=\"/buses?provider=Metropolitana&amp;line=4725&amp;stop=stop-2\"",
+            html);
+        Assert.DoesNotContain("stop-2&amp;direction=", html);
+    }
+
+    [Fact]
+    public async Task Dashboard_StacksEveryFavoriteHeaderOnSmallScreens()
+    {
+        TransitFavorite[] favorites =
+        [
+            new(FavoriteTransportMode.Bus, FavoriteProvider.Metropolitana, "stop-1", "Paragem A", "4725", DirectionId: "dir-test"),
+            new(FavoriteTransportMode.Train, FavoriteProvider.Cp, "station-1", "Estação A", DestinationId: "route-entr-on")
+        ];
+        var json = JsonSerializer.Serialize(favorites, new JsonSerializerOptions
+        {
+            Converters = { new JsonStringEnumConverter() }
+        });
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<IConfiguration>(new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["FavoritesDashboard:RefreshIntervalSeconds"] = "300"
+            })
+            .Build());
+        services.AddSingleton<TimeProvider>(TimeProvider.System);
+        services.AddSingleton<IJSRuntime>(new MemoryJsRuntime(json));
+        services.AddSingleton<FavoriteStore>();
+        services.AddSingleton<AppLogger>();
+        services.AddSingleton<IBusService, FavoriteBusService>();
+        services.AddSingleton<BusServiceRouter>();
+        services.AddSingleton<ITrainService, FavoriteTrainService>();
+        await using var provider = services.BuildServiceProvider();
+        await using var renderer = new HtmlRenderer(provider, provider.GetRequiredService<ILoggerFactory>());
+
+        var html = await renderer.Dispatcher.InvokeAsync(async () =>
+        {
+            var component = await renderer.RenderComponentAsync<FavoritesDashboard>();
+            return component.ToHtmlString();
+        });
+
+        var headerClasses = Regex.Matches(html, "<div class=\"(card-header[^\"]*)\"")
+            .Select(match => match.Groups[1].Value)
+            .ToList();
+
+        Assert.Equal(2, headerClasses.Count);
+        Assert.All(headerClasses, classes =>
+        {
+            Assert.Contains("flex-column", classes);
+            Assert.Contains("flex-lg-row", classes);
+        });
+
+        var actionClasses = Regex.Matches(html, "<div class=\"(d-flex flex-wrap gap-1 flex-shrink-0[^\"]*)\"")
+            .Select(match => match.Groups[1].Value)
+            .ToList();
+        Assert.Equal(2, actionClasses.Count);
+        Assert.All(actionClasses, classes =>
+        {
+            Assert.Contains("align-self-end", classes);
+            Assert.Contains("align-self-lg-center", classes);
+        });
+    }
+
     private static ServiceProvider CreateProvider(
         TransitFavorite[] favorites,
         IBusService busService,
@@ -618,7 +856,11 @@ public sealed class FavoritesDashboardTests
 
     private sealed class FavoriteBusService : IBusService
     {
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string?> _directions = new();
+
         public BusProvider Provider => BusProvider.Metropolitana;
+
+        public string? GetDirection(string stopId) => _directions.GetValueOrDefault(stopId);
 
         public Task<BusLine?> GetLineAsync(string lineNumber)
             => Task.FromResult<BusLine?>(lineNumber == "missing-line"
@@ -629,8 +871,9 @@ public sealed class FavoritesDashboardTests
 
         public Task<List<BusStop>> GetStopsAsync(string directionId, string lineId) => Task.FromResult(new List<BusStop>());
 
-        public Task<List<BusArrival>> GetArrivalsAsync(string stopId, string lineId)
+        public Task<List<BusArrival>> GetArrivalsAsync(string stopId, string lineId, string? directionId = null)
         {
+            _directions[stopId] = directionId;
             if (stopId == "missing-stop")
                 throw new TransitSourceUnavailableException("stop unavailable");
             if (stopId == "unavailable")
@@ -643,6 +886,12 @@ public sealed class FavoritesDashboardTests
                 return Task.FromResult(new List<BusArrival>
                 {
                     new("4725", "", "23:59", false)
+                });
+            if (stopId == "grouped")
+                return Task.FromResult(new List<BusArrival>
+                {
+                    new("4725", "Destino agrupado", "12:00", false),
+                    new("4725", "Destino agrupado", "12:10", false)
                 });
 
             return Task.FromResult(new List<BusArrival>
@@ -683,7 +932,7 @@ public sealed class FavoritesDashboardTests
 
         public Task<List<BusStop>> GetStopsAsync(string directionId, string lineId) => Task.FromResult(new List<BusStop>());
 
-        public Task<List<BusArrival>> GetArrivalsAsync(string stopId, string lineId)
+        public Task<List<BusArrival>> GetArrivalsAsync(string stopId, string lineId, string? directionId = null)
         {
             var call = _calls.AddOrUpdate(stopId, 1, (_, current) => current + 1);
             if (_callWaiters.TryRemove((stopId, call), out var waiter))
@@ -720,7 +969,7 @@ public sealed class FavoritesDashboardTests
 
         public Task<List<BusStop>> GetStopsAsync(string directionId, string lineId) => Task.FromResult(new List<BusStop>());
 
-        public async Task<List<BusArrival>> GetArrivalsAsync(string stopId, string lineId)
+        public async Task<List<BusArrival>> GetArrivalsAsync(string stopId, string lineId, string? directionId = null)
         {
             var call = Interlocked.Increment(ref _callCount);
             if (call == 2)
@@ -734,6 +983,30 @@ public sealed class FavoritesDashboardTests
         }
 
         public void ReleaseRefresh() => _releaseRefresh.TrySetResult();
+    }
+
+    private sealed class FavoriteFertagusService : ITrainService
+    {
+        public string OperatorName => "Fertagus";
+        public List<string> RequestedDirectionIds { get; } = [];
+
+        public Task<List<TrainStation>> GetStationsAsync()
+            => Task.FromResult(new List<TrainStation>());
+
+        public Task<List<TrainDirection>> GetDestinationsAsync(string stationId)
+            => Task.FromResult(new List<TrainDirection>
+            {
+                new("Fertagus\u001fA_0|0", "Roma-Areeiro → Setúbal")
+            });
+
+        public Task<List<TrainDeparture>> GetDeparturesAsync(string stationId, string directionId)
+        {
+            RequestedDirectionIds.Add(directionId);
+            return Task.FromResult(new List<TrainDeparture>
+            {
+                new("Fertagus", "Partida para Setúbal", "12:00")
+            });
+        }
     }
 
     private sealed class FavoriteTrainService : ITrainService

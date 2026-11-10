@@ -123,6 +123,7 @@ public sealed class TrainsPageTests
         var text = renderer.GetText(componentId);
         Assert.Contains("Abrantes", text);
         Assert.Contains("Próximas partidas para Entroncamento", text);
+        Assert.Contains("Agendado", text);
         Assert.Contains("route-entr-on", text);
         Assert.Equal(["route-entr-on"], trainService.RequestedDirectionIds);
         Assert.True(renderer.HasAttributeValueInTree(componentId, "value", "CP"));
@@ -169,13 +170,137 @@ public sealed class TrainsPageTests
         });
     }
 
+    [Fact]
+    public async Task StationFilter_ReducesTheStationOptionsAndKeepsTheSelectedStation()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<IJSRuntime>(new MemoryJsRuntime("[]"));
+        services.AddSingleton<FavoriteStore>();
+        services.AddSingleton<AppLogger>();
+        services.AddSingleton<NavigationManager>(new TestNavigationManager("http://localhost/trains"));
+        services.AddSingleton<IEnumerable<ITrainService>>([new TestTrainService()]);
+        await using var provider = services.BuildServiceProvider();
+        await using var renderer = new InteractiveTestRenderer(
+            provider,
+            provider.GetRequiredService<ILoggerFactory>());
+
+        var componentId = renderer.AddRootComponent<Trains>();
+        await renderer.Dispatcher.InvokeAsync(() => renderer.RenderRootAsync(componentId));
+        await renderer.Dispatcher.InvokeAsync(() => renderer.DispatchEventAsync(
+            renderer.GetRootEventHandler(componentId, "onchange", 0),
+            new ChangeEventArgs { Value = "CP" }));
+        Assert.True(renderer.HasAttributeValueInTree(componentId, "type", "search"));
+
+        await renderer.Dispatcher.InvokeAsync(() => renderer.DispatchEventAsync(
+            renderer.GetRootEventHandler(componentId, "oninput", 0),
+            new ChangeEventArgs { Value = "zzz" }));
+        var unmatchedText = renderer.GetText(componentId);
+        Assert.Contains("Nenhuma estação corresponde ao filtro.", unmatchedText);
+        Assert.DoesNotContain("Abrantes", unmatchedText);
+        Assert.DoesNotContain("Entroncamento", unmatchedText);
+
+        await renderer.Dispatcher.InvokeAsync(() => renderer.DispatchEventAsync(
+            renderer.GetRootEventHandler(componentId, "oninput", 0),
+            new ChangeEventArgs { Value = "entr" }));
+        var filteredText = renderer.GetText(componentId);
+        Assert.Contains("Entroncamento", filteredText);
+        Assert.DoesNotContain("Abrantes", filteredText);
+
+        await renderer.Dispatcher.InvokeAsync(() => renderer.DispatchEventAsync(
+            renderer.GetRootEventHandler(componentId, "onchange", 1),
+            new ChangeEventArgs { Value = "entroncamento-id" }));
+        await renderer.Dispatcher.InvokeAsync(() => renderer.DispatchEventAsync(
+            renderer.GetRootEventHandler(componentId, "oninput", 0),
+            new ChangeEventArgs { Value = "abra" }));
+        var keptSelectionText = renderer.GetText(componentId);
+        Assert.Contains("Abrantes", keptSelectionText);
+        Assert.Contains("Entroncamento", keptSelectionText);
+
+        await renderer.Dispatcher.InvokeAsync(() =>
+        {
+            renderer.RemoveRoot(componentId);
+            return Task.CompletedTask;
+        });
+    }
+
+    [Fact]
+    public async Task FavoriteRoute_PrefillsFertagusOperatorAndDestination()
+    {
+        var favorite = new TransitFavorite(
+            FavoriteTransportMode.Train,
+            FavoriteProvider.Fertagus,
+            "roma-id",
+            "Roma-Areeiro",
+            DestinationId: "Fertagus\u001fA_0|0");
+        var jsRuntime = new MemoryJsRuntime(JsonSerializer.Serialize(
+            new[] { favorite },
+            new JsonSerializerOptions { Converters = { new JsonStringEnumConverter() } }));
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<IJSRuntime>(jsRuntime);
+        services.AddSingleton<FavoriteStore>();
+        services.AddSingleton<AppLogger>();
+        services.AddSingleton<NavigationManager>(new TestNavigationManager(
+            "http://localhost/trains?provider=Fertagus&station=roma-id&destination=Fertagus%1FA_0%7C0"));
+        services.AddSingleton<IEnumerable<ITrainService>>([new TestTrainService(), new TestFertagusService()]);
+        await using var provider = services.BuildServiceProvider();
+        await using var renderer = new InteractiveTestRenderer(
+            provider,
+            provider.GetRequiredService<ILoggerFactory>());
+
+        var componentId = renderer.AddRootComponent<Trains>();
+        await renderer.Dispatcher.InvokeAsync(() => renderer.RenderRootAsync(componentId));
+
+        var text = renderer.GetText(componentId);
+        Assert.Contains("Roma-Areeiro", text);
+        Assert.Contains("Próximas partidas para Setúbal", text);
+        Assert.True(renderer.HasAttributeValueInTree(componentId, "value", "Fertagus"));
+        Assert.True(renderer.HasAttributeValueInTree(componentId, "value", "roma-id"));
+        Assert.True(renderer.HasAttributeValueInTree(componentId, "value", "Fertagus\u001fA_0|0"));
+        Assert.True(renderer.HasAttributeValueInTree(componentId, "aria-pressed", "true"));
+        Assert.False(renderer.HasAttributeValueInTree(componentId, "type", "search"));
+
+        await renderer.Dispatcher.InvokeAsync(() =>
+        {
+            renderer.RemoveRoot(componentId);
+            return Task.CompletedTask;
+        });
+    }
+
+    private sealed class TestFertagusService : ITrainService
+    {
+        public string OperatorName => "Fertagus";
+
+        public Task<List<TrainStation>> GetStationsAsync()
+            => Task.FromResult(new List<TrainStation> { new("roma-id", "Roma-Areeiro") });
+
+        public Task<List<TrainDirection>> GetDestinationsAsync(string stationId)
+            => Task.FromResult(new List<TrainDirection>
+            {
+                new("Fertagus\u001fA_0|0", "Roma-Areeiro → Setúbal"),
+                new("Fertagus\u001fA_0|1", "Setúbal → Roma-Areeiro")
+            });
+
+        public Task<List<TrainDeparture>> GetDeparturesAsync(string stationId, string directionId)
+            => Task.FromResult(new List<TrainDeparture>
+            {
+                new("Fertagus", directionId.EndsWith("|0", StringComparison.Ordinal) ? "Setúbal" : "Roma-Areeiro", "12:00")
+            });
+    }
+
     private sealed class TestTrainService : ITrainService
     {
         public List<string> RequestedDirectionIds { get; } = [];
         public string OperatorName => "CP";
 
         public Task<List<TrainStation>> GetStationsAsync()
-            => Task.FromResult(new List<TrainStation> { new("abrantes-id", "Abrantes") });
+            => Task.FromResult<List<TrainStation>>(
+            [
+                new("abrantes-id", "Abrantes"),
+                new("entroncamento-id", "Entroncamento"),
+                .. Enumerable.Range(1, 23).Select(index => new TrainStation($"filler-{index}", $"Estação de teste {index:D2}"))
+            ]);
 
         public Task<List<TrainDirection>> GetDestinationsAsync(string stationId)
             => Task.FromResult(new List<TrainDirection>

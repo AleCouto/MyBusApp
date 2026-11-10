@@ -152,6 +152,37 @@ public sealed class CarrisMetropolitanaArrivalTests
     }
 
     [Fact]
+    public async Task GetArrivalsAsync_FiltersByRequestedDirectionPattern()
+    {
+        var currentTime = DateTime.Now.TimeOfDay;
+        var body = JsonSerializer.Serialize(new[]
+        {
+            CreateArrival(
+                "[A2L1N]4725",
+                "[A2L1N]4725_0",
+                "[A2L1N]4725_0_2",
+                FormatApiTime(currentTime.Add(TimeSpan.FromMinutes(10))),
+                "To Lisbon"),
+            CreateArrival(
+                "[A2L1N]4725",
+                "[A2L1N]4725_0",
+                "[A2L1N]4725_0_1",
+                FormatApiTime(currentTime.Add(TimeSpan.FromMinutes(12))),
+                "To Setubal"),
+            CreateArrival(
+                "4725",
+                "4725_0",
+                "4725_0_2",
+                FormatApiTime(currentTime.Add(TimeSpan.FromMinutes(14))),
+                "To Lisbon again")
+        });
+
+        var arrivals = await QueryArrivalsAsync(HttpStatusCode.OK, body, "4725", "4725_0_2");
+
+        Assert.Equal(["To Lisbon", "To Lisbon again"], arrivals.Select(arrival => arrival.Destination));
+    }
+
+    [Fact]
     public async Task GetArrivalsAsync_ReturnsEmptyForSuccessfulEmptyResponse()
     {
         var arrivals = await QueryArrivalsAsync(HttpStatusCode.OK, "[]");
@@ -175,7 +206,9 @@ public sealed class CarrisMetropolitanaArrivalTests
 
     private static async Task<List<MyBusApp.Models.Domain.BusArrival>> QueryArrivalsAsync(
         HttpStatusCode statusCode,
-        string body)
+        string body,
+        string lineId = "line-1",
+        string? directionId = null)
     {
         using var listener = new HttpListener();
         var port = GetAvailablePort();
@@ -204,7 +237,7 @@ public sealed class CarrisMetropolitanaArrivalTests
         var service = new CarrisMetropolitanaService(settings);
         try
         {
-            var arrivals = await service.GetArrivalsAsync("test-stop", "line-1")
+            var arrivals = await service.GetArrivalsAsync("test-stop", lineId, directionId)
                 .WaitAsync(TimeSpan.FromSeconds(10));
             await responseTask;
             return arrivals;

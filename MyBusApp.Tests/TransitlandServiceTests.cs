@@ -65,6 +65,6 @@ public class TransitlandServiceTests
 
         public Task<List<BusStop>> GetStopsAsync(string directionId, string lineId) => Task.FromResult(new List<BusStop>());
 
-        public Task<List<BusArrival>> GetArrivalsAsync(string stopId, string lineId) => Task.FromResult(new List<BusArrival>());
+        public Task<List<BusArrival>> GetArrivalsAsync(string stopId, string lineId, string? directionId = null) => Task.FromResult(new List<BusArrival>());
     }
 }

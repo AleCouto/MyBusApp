@@ -10,7 +10,7 @@
     <div class="row border-bottom pb-3 mb-4 w-100">
         <div class="col text-center">
             <h1 class="display-5"><span aria-hidden="true">🚌</span> Autocarros</h1>
-            <p class="text-muted">Consulte linhas, paragens e próximas passagens.</p>
+            <p class="text-muted">Consulte linhas, paragens e próximas partidas.</p>
         </div>
     </div>
 
@@ -115,7 +115,7 @@
                     <div class="card-body bg-primary text-white rounded-top d-flex justify-content-between align-items-center">
                         <div>
                             <h4 class="mb-0">@selectedBusStop.Name</h4>
-                            <small class="opacity-75">Próximas passagens</small>
+                            <small class="opacity-75">Próximas partidas</small>
                         </div>
                         <div class="d-flex align-items-center gap-2">
                             <MyBusApp.Components.FavoriteStar ItemName="@selectedBusStop.Name"
@@ -194,12 +194,13 @@
         var providerQuery = GetQueryValue(query, "provider");
         var lineQuery = GetQueryValue(query, "line");
         var stopQuery = GetQueryValue(query, "stop");
+        var directionQuery = GetQueryValue(query, "direction");
         if (string.IsNullOrWhiteSpace(providerQuery) ||
             string.IsNullOrWhiteSpace(lineQuery) ||
             string.IsNullOrWhiteSpace(stopQuery))
             return;
 
-        var routeKey = $"{providerQuery}|{lineQuery}|{stopQuery}";
+        var routeKey = $"{providerQuery}|{lineQuery}|{stopQuery}|{directionQuery}";
         if (string.Equals(routeKey, loadedFavoriteRoute, StringComparison.Ordinal))
             return;
         loadedFavoriteRoute = routeKey;
@@ -212,7 +213,7 @@
         }
 
         lineNumber = lineQuery;
-        await SearchBusAsync(provider, stopQuery);
+        await SearchBusAsync(provider, stopQuery, directionQuery);
     }
 
     private static string? GetQueryValue(string query, string name)
@@ -233,7 +234,7 @@
 
     private Task SearchBusAsync() => SearchBusAsync(null, null);
 
-    private async Task SearchBusAsync(BusProvider? provider, string? stopId)
+    private async Task SearchBusAsync(BusProvider? provider, string? stopId, string? directionId = null)
     {
         if (string.IsNullOrWhiteSpace(lineNumber)) return;
         favoriteMessage = null;
@@ -252,7 +253,7 @@
             {
                 busDirections = await activeBusService.GetDirectionsAsync(currentLine.Id);
                 if (stopId is not null)
-                    await SelectBusFavoriteStopAsync(stopId);
+                    await SelectBusFavoriteStopAsync(stopId, directionId);
             }
         }
         catch (TransitSourceUnavailableException exception)
@@ -271,10 +272,31 @@
         }
     }
 
-    private async Task SelectBusFavoriteStopAsync(string stopId)
+    private async Task SelectBusFavoriteStopAsync(string stopId, string? directionId = null)
     {
         if (currentLine is null || activeBusService is null)
             return;
+
+        if (!string.IsNullOrWhiteSpace(directionId))
+        {
+            var requestedDirection = busDirections.FirstOrDefault(direction =>
+                string.Equals(direction.Id, directionId, StringComparison.Ordinal));
+            if (requestedDirection is not null)
+            {
+                var requestedStops = await activeBusService.GetStopsAsync(requestedDirection.Id, currentLine.Id);
+                var requestedStop = requestedStops.FirstOrDefault(candidate =>
+                    string.Equals(candidate.Id, stopId, StringComparison.Ordinal));
+                if (requestedStop is not null)
+                {
+                    selectedBusDirection = requestedDirection;
+                    busStops = requestedStops;
+                    selectedBusStop = requestedStop;
+                    await LoadBusFavoriteStateAsync();
+                    await RefreshBusArrivalsAsync();
+                    return;
+                }
+            }
+        }
 
         foreach (var direction in busDirections)
         {
@@ -345,7 +367,10 @@
         queryMessage = null;
         try
         {
-            busArrivals = await activeBusService.GetArrivalsAsync(selectedBusStop.Id, currentLine.Id);
+            busArrivals = await activeBusService.GetArrivalsAsync(
+                selectedBusStop.Id,
+                currentLine.Id,
+                selectedBusDirection?.Id);
         }
         catch (TransitSourceUnavailableException exception)
         {
@@ -383,7 +408,8 @@
             provider.Value,
             selectedBusStop.Id,
             selectedBusStop.Name,
-            currentLine.ShortName);
+            currentLine.ShortName,
+            DirectionId: selectedBusDirection?.Id);
     }
 
     private async Task LoadBusFavoriteStateAsync()

@@ -7,6 +7,7 @@ public class ApiSettings
     public ApiEndpoint Carris2 { get; set; } = new();
     public ApiEndpoint Transitland { get; set; } = new();
     public ApiEndpoint Cp { get; set; } = new();
+    public ApiEndpoint Fertagus { get; set; } = new();
 }
 
 public class ApiEndpoint

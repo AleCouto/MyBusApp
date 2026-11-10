@@ -121,16 +121,21 @@ condicionar a arquitetura nem atrasar o objetivo principal.
 -   Os favoritos são persistidos no `localStorage` do navegador. Nesta
     fase, não existe sincronização entre navegadores ou dispositivos.
 -   Os favoritos usam identificadores definidos por modo: autocarros
-    usam provider, número público da linha e `StopId`; comboios usam
-    provider, `StationId` e `DestinationId` (`TrainDirection.Id`). Os
-    nomes apresentados não são identificadores.
+    usam provider, número público da linha, `StopId` e sentido
+    (`BusDirection.Id`); comboios usam provider, `StationId` e
+    `DestinationId` (`TrainDirection.Id`). Os nomes apresentados não são
+    identificadores.
 
 ### 3.1 Decisões aprovadas para favoritos (M8)
 
 1. **Identidade dos favoritos de autocarro:** `Provider + número público
-   da linha + StopId`. O provider integra a identidade; o nome da
-   paragem não é usado como identificador; a mesma paragem pode ser
-   guardada em linhas diferentes.
+   da linha + StopId + DirectionId`. O provider integra a identidade; o
+   nome da paragem não é usado como identificador; a mesma paragem pode
+   ser guardada em linhas diferentes. O sentido (`BusDirection.Id`) foi
+   acrescentado em 2026-11-10 para que cada favorito apresente apenas as
+   partidas do destino escolhido; favoritos antigos sem sentido
+   permanecem válidos, pedem a escolha do sentido e não consultam todos
+   os sentidos até serem regravados.
 2. **Renomeação:** não são permitidos aliases nem nomes personalizados.
    Os nomes apresentados são provenientes dos dados da fonte.
 3. **Persistência:** manter `localStorage` no navegador. Não está
@@ -215,7 +220,11 @@ Regras semânticas aprovadas:
   Transitland             Fonte/agregador de      Integração existente;
                           autocarros              não é operador nem modo
 
-  Fertagus                Comboios                Por auditar/integrar
+  Fertagus                Comboios                Integrado via
+                                                  `ITrainService`; GTFS
+                                                  oficial; horários
+                                                  agendados; validado
+                                                  manualmente
 
   Metropolitano de Lisboa Metro                   Por auditar/integrar
 
@@ -408,6 +417,64 @@ frequência, cobertura, formato e redistribuição devem ser verificados.
     o build final.
 -   M8 e M10 permanecem incompletos.
 
+**Registo de 2026-11-10 --- favoritos de autocarro por sentido**
+
+-   O sentido (`BusDirection.Id`) passou a integrar a identidade do
+    favorito de autocarro: provider + número público da linha + `StopId`
+    + sentido. A mesma paragem e linha passam a poder ser guardadas em
+    sentidos diferentes.
+-   `IBusService.GetArrivalsAsync` aceita o sentido opcional. A Carris
+    Metropolitana filtra pelo `pattern_id` e a Carris Lisboa pela rota e
+    direção do GTFS; o Transitland não expõe o pattern nas partidas e
+    continua a devolver todos os sentidos da linha.
+-   A página Autocarros envia o sentido selecionado e o dashboard envia
+    o sentido guardado; «Ver mais partidas» reabre a pesquisa com
+    `direction`, que pré-seleciona o sentido e a paragem.
+-   Favoritos antigos sem sentido permanecem válidos, pedem a escolha
+    do sentido e não consultam todos os sentidos; ao guardar a partir da
+    pesquisa, o favorito antigo é atualizado em vez de duplicado.
+-   Testes focados de store, serviços e páginas; suite com 104 testes e
+    build com 0 avisos e 0 erros.
+-   Validação em browser com dados isolados: favorito 4725 / Várzea
+    (Terminal) P1 com sentido para Lisboa apresenta apenas «Lisboa (Sete
+    Rios)»; o mesmo favorito sem sentido continua a apresentar os dois
+    sentidos; a página Autocarros com
+    `direction=4725_0_2` apresenta apenas as partidas desse sentido.
+    Zero erros de consola.
+-   **Limitação:** o Transitland não permite filtrar por sentido com os
+    dados atuais; a validação foi feita em browser com emulação de
+    viewport, não em dispositivos físicos.
+
+**Registo de 2026-11-10 --- M14, integração da Fertagus**
+
+-   Fonte oficial confirmada: GTFS em
+    `https://www.fertagus.pt/GTFSTMLzip/Fertagus_GTFS.zip` (HTTP 200,
+    87 KB; 3 rotas, 14 estações, 260 viagens e 3 355 stop_times;
+    calendário de 2026-09-14 a 2027-03-14). Sem realtime identificado.
+-   Dados gerados com `Tools/GtfsDataGenerator` para
+    `wwwroot/data/fertagus/`, no formato estático versão 2. O
+    `route_short_name` uniforme agrega a operação numa linha lógica
+    «Fertagus».
+-   O motor estático foi extraído para `GtfsTrainService`; `CpService` e
+    `FertagusService` são serviços por operador sobre esse motor,
+    registados em `Program.cs`. A Fertagus segue o padrão estático do
+    CP: o feed é normalizado fora do browser pelo
+    `Tools/GtfsDataGenerator` e a aplicação consome o formato comum
+    `GtfsStatic*`, sem DTOs por operador no cliente. A identidade de
+    direção passou a incluir o sentido quando a rota tem mais de uma
+    direção; os identificadores CP existentes mantêm-se válidos.
+-   Favoritos: `FavoriteProvider.Fertagus`, identidade provider +
+    estação + destino; dashboard e página Comboios generalizados para
+    resolver o serviço pelo provider e aceitar `provider` no URL.
+-   Testes: 111 aprovados; build com 0 avisos e 0 erros; fluxo manual
+    validado no browser (Fertagus → Roma-Areeiro → Setúbal, cinco
+    partidas), favorito apresentado no dashboard e CP sem regressões;
+    zero erros de consola.
+-   **Limitações:** a lista de destinos mostra rótulos repetidos quando
+    dois sentidos terminam na mesma estação (ex.: dois «Roma-Areeiro»),
+    tal como já acontecia no CP; sem realtime; validação em browser
+    headless.
+
 **Limitação atual:** Metro e Barcos existem como opções de navegação,
 mas ainda não têm integrações reais. Não apresentar a opção na interface
 como disponibilidade de horários.
@@ -529,8 +596,8 @@ frequentes.
 -   [x] Tratar dados guardados inválidos, versões antigas ou referências
     inexistentes.
 -   [x] Evitar duplicados em favoritos de autocarro quando coincidirem
-    provider, linha e identificador da paragem; para comboios, exigir
-    igualdade de provider, ID da estação e `TrainDirection.Id` do
+    provider, linha, identificador da paragem e sentido; para comboios,
+    exigir igualdade de provider, ID da estação e `TrainDirection.Id` do
     destino. Favoritos CP antigos sem `DestinationId` são legados e não
     recebem destino por inferência.
 -   [x] Permitir guardar a mesma paragem associada a linhas diferentes.
@@ -547,8 +614,8 @@ locais favoritos; testes cobrem os casos principais.
     `TransitFavorite.HasSameIdentityAs`, ignorando nomes e outros campos
     descritivos.
 -   [x] Preservar as identidades aprovadas em M8: autocarros por
-    provider, número público da linha e `StopId`; comboios CP por
-    provider, `StationId` e `DestinationId` (`TrainDirection.Id`).
+    provider, número público da linha, `StopId` e sentido; comboios CP
+    por provider, `StationId` e `DestinationId` (`TrainDirection.Id`).
 -   [x] Serializar, com `SemaphoreSlim`, `AddAsync`, `SetFavoriteAsync`,
     `SaveAsync`, `LoadAsync` e `IsFavoriteAsync` dentro da mesma
     instância de `FavoriteStore`.
@@ -653,26 +720,26 @@ continuamente todos os passos iniciais. Nos passos monitorizados não
 foram observados erros de consola, falhas de pedidos ou respostas HTTP
 com estado igual ou superior a 400.
 
-### \[ \] M10 --- Página inicial com próximas partidas dos favoritos
+### \[X\] M10 --- Página inicial com próximas partidas dos favoritos
 
 **Objetivo:** ao abrir a aplicação, apresentar imediatamente os locais
 habituais e os próximos horários disponíveis.
 
--   [ ] Criar a experiência inicial centrada nos favoritos.
--   [ ] Mostrar cada favorito com nome e modo; apresentar o operador real
+-   [x] Criar a experiência inicial centrada nos favoritos.
+-   [x] Mostrar cada favorito com nome e modo; apresentar o operador real
     apenas quando estiver identificado e validado.
--   [ ] Consultar automaticamente as próximas partidas de cada favorito.
--   [ ] Para cada favorito CP com destino, consultar apenas as partidas
+-   [x] Consultar automaticamente as próximas partidas de cada favorito.
+-   [x] Para cada favorito CP com destino, consultar apenas as partidas
     do `TrainDirection.Id` guardado e apresentar claramente estação,
     destino, partidas e estado dos horários. Não agregar destinos.
--   [ ] Identificar favoritos CP antigos sem destino como necessitando
+-   [x] Identificar favoritos CP antigos sem destino como necessitando
     de nova seleção; não consultar todos os sentidos nem inferir um
     destino.
--   [ ] Mostrar partidas sem misturar incorretamente serviços ou
+-   [x] Mostrar partidas sem misturar incorretamente serviços ou
     direções.
--   [ ] Mostrar hora prevista/programada e tempo restante quando os
+-   [x] Mostrar hora prevista/programada e tempo restante quando os
     dados permitirem calculá-lo.
--   [ ] Identificar cada resultado como Tempo real ou Agendado.
+-   [x] Identificar cada resultado como Tempo real ou Agendado.
 -   [x] Disponibilizar atualização manual e atualização periódica
     automática configurável (300 segundos por omissão), sem assumir que
     todos os providers suportam realtime.
@@ -681,14 +748,31 @@ habituais e os próximos horários disponíveis.
     ativa ou estiver em segundo plano.
 -   [x] Isolar falhas: um favorito indisponível não deve impedir os
     restantes de carregar.
--   [ ] Mostrar estados distintos para carregamento, sem partidas,
+-   [x] Mostrar estados distintos para carregamento, sem partidas,
     indisponibilidade e erro.
 -   [x] Permitir abrir o favorito para consultar mais partidas e
     detalhes.
--   [ ] Garantir comportamento responsivo em dispositivos móveis e
+-   [x] Garantir comportamento responsivo em dispositivos móveis e
     desktop.
--   [ ] Validar manualmente favoritos de autocarros e comboios já
+-   [x] Validar manualmente favoritos de autocarros e comboios já
     integrados.
+
+**Evidências dos critérios 1 a 3 (dashboard inicial, identificação e
+consulta automática, 2026-11-10):**
+
+-   A rota `/` é o Dashboard de favoritos: abrir a aplicação apresenta o
+    título «Favoritos» e as partidas dos locais guardados sem qualquer
+    pesquisa nem interação.
+-   Cada cartão identifica o nome e o modo: «Linha 714 / Paragem Cais
+    Sodré» com «Carris Lisboa · Autocarros» e a estação com «CP ·
+    Comboios»; o Transitland é apresentado como «Fonte técnica:
+    Transitland», nunca como operador, e os operadores só aparecem
+    quando identificados e validados.
+-   A consulta é automática no carregamento: 17 pedidos de dados ou
+    partidas observados sem interação, cinco partidas por favorito e
+    zero erros de consola.
+-   Validado em Chrome headless com Blazor WebAssembly, viewport de
+    1280 x 800 e favoritos isolados no `localStorage`.
 
 **Evidências do critério de navegação:** «Ver mais partidas» abre a
 pesquisa de autocarros preservando fornecedor, linha e paragem, e a
@@ -699,58 +783,179 @@ com a estação selecionada, sem inferência de destino. Foram aprovados
 mobile (390 x 844); os favoritos permaneceram guardados ao regressar ao
 Dashboard. Não foram observados erros nas sequências monitorizadas.
 
+**Evidências dos critérios 15 e 16 (validação no browser, 2026-11-10):**
+
+-   Validação em Chrome headless com Blazor WebAssembly, viewports de
+    1280 x 800 (desktop) e 390 x 844 (mobile), com os favoritos isolados
+    no `localStorage` e verificação independente contra as fontes; os
+    cabeçalhos dos favoritos ficaram empilhados em mobile e inalterados
+    em desktop.
+-   Carris Lisboa: linha 714, paragem Cais Sodré; partidas iguais às do
+    GTFS local, todas **Agendado**.
+-   Carris Metropolitana: linha 4725, paragem Várzea (Terminal) P1;
+    distinção correta entre `estimated_arrival` (**Tempo real**) e
+    `scheduled_arrival` (**Agendado**) na mesma lista.
+-   CP: estação Cais do Sodre com o destino guardado; partidas iguais às
+    do dataset estático e sem agregação da direção oposta.
+-   «Ver mais partidas» preservou fornecedor, linha e paragem em
+    autocarros, e estação e destino em comboios.
+-   A atualização manual preservou os favoritos, a ordem e o conteúdo do
+    `localStorage` (valor byte-idêntico), com novo pedido de partidas
+    registado.
+-   Zero erros de consola ou exceções nos cenários monitorizados.
+-   Build com 0 avisos e 0 erros; suite com 96 testes aprovados.
+
+**Limitação destes critérios:** a validação foi feita em browser com
+emulação de viewport, não em dispositivos físicos. A atualização
+periódica automática, os estados de indisponibilidade e a compatibilidade
+com favoritos CP legados não foram exercitados nesta sessão.
+
+**Evidências dos critérios 4 a 8 e 13 (favoritos CP, sentidos,
+horários e estados, 2026-11-10):**
+
+-   Favorito CP com destino guardado: consulta apenas o
+    `TrainDirection.Id` persistido e apresenta estação, destino, cinco
+    partidas e o estado «Agendado»; a direção oposta não é consultada
+    nem agregada.
+-   Favorito CP antigo sem destino: identificado como «Destino por
+    selecionar (favorito antigo)», sem consultar sentidos nem inferir um
+    destino; «Selecionar estação e destino» abre a estação sem destino.
+-   Favorito de autocarro com sentido guardado (4725, Várzea): apenas as
+    partidas desse sentido, sem misturar os dois sentidos; na mesma
+    lista, quatro partidas «Tempo real» (estimativa do operador) e uma
+    «Agendado».
+-   Cada partida mostra a hora e o tempo restante («daqui a N min» ou
+    «em breve»), com o rótulo temporal correspondente à origem do dado.
+-   Estados distintos: uma linha indisponível apresenta «O serviço ou a
+    fonte está indisponível.» sem alterar favoritos; carregamento,
+    ausência de partidas e erro estão cobertos pelos testes do
+    dashboard.
+-   Zero erros de consola; Chrome headless com Blazor WebAssembly,
+    viewport de 1280 x 800 e favoritos isolados no `localStorage`.
+
 **Critérios:** abrir a aplicação permite ver próximas partidas sem
 repetir pesquisas; falhas num favorito não bloqueiam os restantes;
 origem dos horários inequívoca; fluxo validado no browser.
 
-### \[ \] M11 --- Consulta manual rápida e consistência multimodal
+**Estado:** concluído em 2026-11-10. Limitações registadas: o
+Transitland não permite filtrar por sentido; favoritos de autocarro
+antigos sem sentido pedem a escolha do sentido em vez de mostrarem
+todos os sentidos.
+
+### \[X\] M11 --- Consulta manual rápida e consistência multimodal
 
 **Objetivo:** manter a pesquisa manual como complemento dos favoritos,
 com acesso direto às próximas partidas.
 
--   [ ] Rever os fluxos atuais de pesquisa de autocarros e comboios à
+-   [x] Rever os fluxos atuais de pesquisa de autocarros e comboios à
     luz do objetivo de consulta rápida.
--   [ ] Analisar a resolução de linhas Transitland quando vários
+-   [x] Analisar a resolução de linhas Transitland quando vários
     resultados partilham o mesmo número público; preservar a identidade
-    aprovada dos favoritos de autocarro.
--   [ ] Reduzir passos desnecessários entre selecionar linha/estação,
-    direção/destino, paragem e ver partidas.
--   [ ] Permitir adicionar aos favoritos uma paragem/estação selecionada
+    aprovada dos favoritos de autocarro. Análise concluída; a correção
+    foi adiada para M12 por decisão de 2026-11-10.
+-   [x] Manter o fluxo de seleção atual (linha → sentido → paragem e
+    operador → estação → destino), por decisão de produto em
+    2026-11-10; não reduzir passos.
+-   [x] Permitir adicionar aos favoritos uma paragem/estação selecionada
     sem repetir a pesquisa.
--   [ ] Manter consistência de apresentação entre modos sem forçar
+-   [x] Manter consistência de apresentação entre modos sem forçar
     contratos técnicos universais.
--   [ ] Manter modos sem provider real claramente indisponíveis, sem
+-   [x] Manter modos sem provider real claramente indisponíveis, sem
     dados simulados.
--   [ ] Validar regressões nos fluxos Carris Metropolitana, Carris
+-   [x] Validar regressões nos fluxos Carris Metropolitana, Carris
     Lisboa e CP.
+
+**Evidências da auditoria e do primeiro lote (2026-11-10):**
+
+-   Auditoria aos fluxos manuais: autocarros em 4 interações (linha →
+    Pesquisar → sentido → paragem) e comboios em 3 (operador → estação →
+    destino); as partidas carregam automaticamente após a última
+    seleção.
+-   Sentidos da Carris Lisboa desambiguados pelos extremos do percurso
+    («Outurela → Cais Sodré» / «Cais Sodré → Outurela»), em vez de dois
+    rótulos iguais.
+-   Filtro de pesquisa na estação CP: as 455 estações passam a poder ser
+    filtradas por nome, mantendo a estação selecionada na lista.
+-   Partidas de comboios passam a mostrar «Agendado»; «Próximas
+    passagens» foi unificado para «Próximas partidas».
+-   Favorito a partir da pesquisa: estrela presente em Autocarros e
+    Comboios após a seleção da paragem ou do destino.
+-   Metro e Barcos continuam a apresentar indisponibilidade explícita,
+    sem dados simulados.
+-   Testes: 106 aprovados; build com 0 avisos e 0 erros; validação em
+    Chrome headless (1280 x 800) sem erros de consola.
+
+**Pendente:** o Transitland mantém-se inalterado por decisão de
+2026-11-10; a avaliação do seu futuro passa para a auditoria de fontes
+(M12), incluindo a chave da API exposta no cliente. A lista de destinos
+CP continua a apresentar rótulos repetidos quando várias direções
+partilham o mesmo destino, cada uma com ID próprio; a desambiguação
+dessa lista fica para o lote seguinte.
+
+**Regressão final (2026-11-10):** os três fluxos foram executados no
+browser sobre o build final: Carris Lisboa 714 (sentido «Cais Sodré →
+Outurela», paragem Cais Sodré) com cinco partidas, Carris Metropolitana
+4725 (sentido «Lisboa (Sete Rios)», paragem Várzea (Terminal) P1) com
+cinco partidas e CP (Cais do Sodre → Cascais) com cinco partidas, todas
+com o rótulo «Agendado». Zero erros de consola.
+
+**Estado:** concluído em 2026-11-10. Pendências registadas para o lote
+seguinte: desambiguação dos destinos CP repetidos e avaliação do
+Transitland em M12.
 
 **Critérios:** fluxos existentes funcionais; pesquisa manual conduz
 rapidamente às partidas; favoritos criados a partir da pesquisa;
 regressão manual aprovada.
 
-### \[ \] M12 --- Auditoria das fontes e estratégia por operador
+### \[X\] M12 --- Auditoria das fontes e estratégia por operador
 
 **Objetivo:** substituir suposições por uma matriz verificada de fontes
 programadas e realtime, priorizando a consulta de partidas.
 
--   [ ] Rever fontes atuais de Carris Metropolitana, Carris Lisboa e CP.
--   [ ] Consultar documentação oficial da Fertagus.
--   [ ] Consultar documentação oficial do Metropolitano de Lisboa.
--   [ ] Consultar documentação oficial da Transtejo/Soflusa.
--   [ ] Identificar GTFS estático, GTFS-RT, API REST, outras fontes
+-   [x] Rever fontes atuais de Carris Metropolitana, Carris Lisboa e CP.
+-   [x] Avaliar o futuro do Transitland como agregador técnico face às
+    fontes oficiais, incluindo a exposição da chave da API no cliente.
+-   [x] Consultar documentação oficial da Fertagus.
+-   [x] Consultar documentação oficial do Metropolitano de Lisboa.
+-   [x] Consultar documentação oficial da Transtejo/Soflusa.
+-   [x] Identificar GTFS estático, GTFS-RT, API REST, outras fontes
     oficiais ou ausência de fonte pública.
--   [ ] Confirmar URLs, autenticação, limites, licença/condições de uso
+-   [x] Confirmar URLs, autenticação, limites, licença/condições de uso
     e frequência de atualização.
--   [ ] Confirmar se os dados podem ser utilizados e redistribuídos.
--   [ ] Avaliar cobertura de linhas, viagens, calendários, paragens e
+-   [x] Confirmar se os dados podem ser utilizados e redistribuídos.
+-   [x] Avaliar cobertura de linhas, viagens, calendários, paragens e
     identificadores.
--   [ ] Avaliar compatibilidade de cada feed com
+-   [x] Avaliar compatibilidade de cada feed com
     `Tools/GtfsDataGenerator`.
--   [ ] Identificar operadores que exigem API própria em vez de GTFS.
--   [ ] Criar matriz por operador: fonte programada, realtime,
+-   [x] Identificar operadores que exigem API própria em vez de GTFS.
+-   [x] Criar matriz por operador: fonte programada, realtime,
     atualização, cobertura, riscos e limitações.
--   [ ] Recomendar ordem de integração com base na qualidade das fontes
+-   [x] Recomendar ordem de integração com base na qualidade das fontes
     e utilidade para o produto.
+
+**Matriz de fontes (auditada em 2026-11-10):**
+
+| Operador/fonte | Programado | Realtime | Licença/termos | Cobertura e identificadores | Generator | Riscos e limitações |
+|---|---|---|---|---|---|---|
+| Carris Metropolitana | GTFS oficial em `https://api.carrismetropolitana.pt/gtfs` (74 MB, HTTP 200) | API REST v2 própria, já integrada | dados.gov.pt indica «não especificada»; catálogo externo indica CC BY 4.0 — por confirmar | Rede da AML; IDs técnicos com prefixo de operador | Compatível; feed grande | Limites da API por confirmar; feed pesado |
+| Carris Lisboa | GTFS oficial no gateway `v2.11` (em uso) | GTFS-RT listado em catálogo externo (`mdb-2930`), endpoint não verificado | Por confirmar | Rede de Lisboa; IDs estáveis | Compatível (em uso) | Licença e realtime por confirmar |
+| CP | Sem feed oficial em dados.gov.pt; registo NAP 176 referido pelo Transitland | Não identificado | Por confirmar (NAP 176) | Nacional; dataset atual sem proveniência documentada | Por confirmar | Risco de proveniência dos dados em uso |
+| Fertagus | GTFS oficial em `https://www.fertagus.pt/GTFSTMLzip/Fertagus_GTFS.zip` (87 KB, HTTP 200; 3 rotas, 14 paragens, 260 viagens; calendário 2026-09-14 a 2027-03-14) | Não identificado | CC BY 4.0 via NAP 185 (indicada por catálogo, confirmar termos) | Linha Pragal–Setúbal | Compatível; `route_short_name` uniforme («Fertagus») agrupa numa linha lógica | Sem realtime; mapeamento da linha a decidir |
+| Metropolitano de Lisboa | GTFS oficial em dados.gov.pt (660 KB, HTTP 200; 4 rotas, 74 paragens, 2 542 viagens; calendário 2026) | Não identificado | CC BY 4.0 | Rede do Metro de Lisboa | Compatível | Atualização pontual; modo novo |
+| Transtejo/Soflusa | URL publicada `https://api.transtejo.pt/files/GTFS.zip` não operacional (HTTP 404 e erro de certificado); organização no dados.gov.pt sem datasets | Não identificado | CC0 indicada por catálogo externo, por confirmar | 5 rotas referidas por catálogo externo | Por confirmar | Bloqueado até existir URL válida |
+| Transitland | Agregador (não oficial) | Sem realtime | Termos do agregador | Rotas de vários países | Não aplicável | Filtros ignorados; escolha arbitrária; chave exposta no cliente |
+
+**Ordem de integração recomendada:** 1.º Fertagus (feed oficial
+verificado e pequeno, alarga o modo ferroviário); 2.º Metropolitano de
+Lisboa (GTFS oficial, mas exige modo e contrato novos); 3.º
+Transtejo/Soflusa (bloqueado até existir URL válida). Antes do M14,
+confirmar a proveniência do dataset CP (registo NAP 176) e decidir o
+futuro do Transitland; com as fontes oficiais cobertas, o Transitland
+deve ser desativado e a chave removida do cliente.
+
+**Estado:** concluído em 2026-11-10. Pendências de confirmação: licença
+da Carris Lisboa, limites da API da Carris Metropolitana, proveniência
+do feed CP e URL válida da Transtejo/Soflusa.
 
 **Critérios:** nenhuma fonte considerada disponível sem evidência
 verificável; estratégia documentada para horários programados e
@@ -792,29 +997,62 @@ preservados.
 **Objetivo:** disponibilizar partidas de mais operadores, um de cada
 vez, segundo a auditoria M12.
 
-Candidatos: - \[ \] Fertagus --- Comboios. - \[ \] Metropolitano de
-Lisboa --- Metro. - \[ \] Transtejo/Soflusa --- Barcos.
+**Candidatos:**
 
-**Ciclo obrigatório por operador:** - \[ \] Confirmar fonte oficial e
-condições de utilização. - \[ \] Confirmar cobertura e qualidade dos
-dados. - \[ \] Decidir GTFS estático, API própria ou combinação. - \[ \]
-Implementar/estender processamento estático, se aplicável. - \[ \]
-Implementar serviço específico e contrato do respetivo modo. - \[ \]
-Implementar realtime, se existir fonte utilizável. - \[ \] Implementar
-fallback programado, se existir fonte. - \[ \] Permitir guardar
-paragens/estações desse operador nos favoritos. - \[ \] Adicionar testes
-com dados reais ou fixtures fiéis. - \[ \] Validar build e testes. - \[
-\] Validar fluxo completo no browser. - \[ \] Confirmar ausência de
-regressões nos operadores existentes. - \[ \] Atualizar o plano com
-decisões, limitações e estado.
+-   [x] Fertagus --- Comboios.
+-   [ ] Metropolitano de Lisboa --- Metro.
+-   [ ] Transtejo/Soflusa --- Barcos.
+
+**Ciclo obrigatório por operador:**
+
+-   [ ] Confirmar fonte oficial e condições de utilização.
+-   [ ] Confirmar cobertura e qualidade dos dados.
+-   [ ] Decidir GTFS estático, API própria ou combinação.
+-   [ ] Implementar/estender processamento estático, se aplicável.
+-   [ ] Implementar serviço específico e contrato do respetivo modo.
+-   [ ] Implementar realtime, se existir fonte utilizável.
+-   [ ] Implementar fallback programado, se existir fonte.
+-   [ ] Permitir guardar paragens/estações desse operador nos favoritos.
+-   [ ] Adicionar testes com dados reais ou fixtures fiéis.
+-   [ ] Validar build e testes.
+-   [ ] Validar fluxo completo no browser.
+-   [ ] Confirmar ausência de regressões nos operadores existentes.
+-   [ ] Atualizar o plano com decisões, limitações e estado.
+
+#### \[X\] M14.1 --- Fertagus (concluído em 2026-11-10)
+
+-   [x] Fonte oficial e condições: GTFS em
+    `https://www.fertagus.pt/GTFSTMLzip/Fertagus_GTFS.zip` (HTTP 200);
+    licença CC BY 4.0 indicada via NAP 185, termos a confirmar.
+-   [x] Cobertura e qualidade: 3 rotas, 14 estações, 260 viagens e
+    3 355 stop_times; calendário de 2026-09-14 a 2027-03-14.
+-   [x] GTFS estático escolhido; sem fonte realtime identificada.
+-   [x] Processamento estático com `Tools/GtfsDataGenerator` para
+    `wwwroot/data/fertagus/`.
+-   [x] Serviço específico: `FertagusService` sobre o motor
+    `GtfsTrainService`, no contrato `ITrainService`.
+-   [ ] Realtime: sem fonte identificada; não aplicável nesta fase.
+-   [x] Fallback programado: partidas apresentadas como «Agendado».
+-   [x] Favoritos: provider Fertagus + estação + destino; dashboard e
+    página Comboios.
+-   [x] Testes com dados reais e fixtures: serviço, store, página e
+    dashboard.
+-   [x] Build com 0 avisos e 0 erros; 111 testes aprovados.
+-   [x] Fluxo completo validado no browser: Fertagus → Roma-Areeiro →
+    Setúbal, cinco partidas; favorito no dashboard; zero erros de
+    consola.
+-   [x] Sem regressões no CP (fluxo manual revalidado).
+-   [x] Plano atualizado.
+-   **Limitações:** rótulos de destino repetidos (dois «Roma-Areeiro»),
+    como no CP; sem realtime; validação em browser headless.
 
 **Critérios por operador:** fonte documentada; consulta contextual
 funcional; próximas partidas coerentes; origem realtime/agendada
 correta; integração com favoritos; fallback funcional quando aplicável;
 build, testes e validação manual aprovados.
 
-A ordem dos operadores será decidida com base na auditoria M12, não
-assumida antecipadamente.
+A ordem dos operadores restantes segue a auditoria M12: Metropolitano de
+Lisboa e, por último, Transtejo/Soflusa (bloqueada por URL inválida).
 
 ### \[ \] M15 --- Pipeline de aquisição e atualização GTFS
 
@@ -944,6 +1182,25 @@ Preencher antes de implementar cada operador:
   Riscos e limitações             Pendente
   Decisão de implementação        Pendente
 
+**Ficha preenchida --- Fertagus (2026-11-10):**
+
+| Informação | Resultado |
+|---|---|
+| Operador e modo | Fertagus --- Comboios |
+| Fonte oficial | GTFS em `https://www.fertagus.pt/GTFSTMLzip/Fertagus_GTFS.zip` (HTTP 200) |
+| Fonte de horário programado | GTFS estático (3 rotas, 14 estações, 260 viagens; calendário de 2026-09-14 a 2027-03-14) |
+| Fonte realtime | Não identificada |
+| Formato dos dados | GTFS schedule; sem GTFS-RT |
+| Frequência de atualização | Não documentada; ficheiro com `last-modified` de 2026-09-14 |
+| Licença/condições de uso | CC BY 4.0 indicada via NAP 185; termos a confirmar |
+| Cobertura | Linha Lisboa (Roma-Areeiro) --- Setúbal, via Coina |
+| Identificadores e mapeamentos | Estações `FTStop*`; rotas `A_0` e `A_1`; direções `route|direction` |
+| Compatibilidade com generator | Sim (ZIP GTFS standard; `route_short_name` uniforme) |
+| Estratégia de fallback | Sem realtime: apresentar horários agendados como «Agendado» |
+| Integração com favoritos | Provider Fertagus + estação + destino |
+| Riscos e limitações | Rótulos de destino repetidos; sem realtime; atualização não documentada |
+| Decisão de implementação | Integrado em 2026-11-10 |
+
 Não iniciar desenvolvimento de um operador enquanto as fontes essenciais
 e a estratégia de fallback não estiverem compreendidas. Se não existir
 fonte realtime, o operador pode ser integrado apenas com horários
@@ -967,12 +1224,16 @@ programados, desde que isso fique explícito.
 
 ## 10. Próximo passo
 
-**M9 concluído — M9.1, integridade e unicidade; M9.2, tratamento de
-erros de persistência; M9.3, testes de identidade e compatibilidade;
-M9.4, interações do Dashboard e persistência; e M9.5, validação
-funcional manual no browser, concluídos.**
+**M14.1 concluído — Fertagus integrada via `ITrainService` com GTFS
+oficial, favoritos por estação e destino e fluxo validado no browser.**
 
-**Próximo passo do roadmap: M10 — Página inicial com próximas partidas
-dos favoritos.** M10 permanece por iniciar nesta atualização. As
-limitações de recuperação de favoritos duplicados permanecem registadas
-nas secções M9.1 e M9.2.
+**Próximo passo do roadmap: M13 — Fallback realtime → programado,** ou a
+continuação do M14 com o Metropolitano de Lisboa. A Transtejo/Soflusa
+continua bloqueada até existir uma URL de GTFS válida. Pendências do
+M12: licença da Carris Lisboa, limites da API da Carris Metropolitana,
+proveniência do feed CP e termos da Fertagus (NAP 185). Limitações ainda
+abertas: favoritos de autocarro antigos sem sentido pedem a escolha do
+sentido; a recuperação visual de
+favoritos duplicados permanece por implementar (M9.1/M9.2); a
+desambiguação dos destinos repetidos (CP e Fertagus) fica para o lote
+seguinte.

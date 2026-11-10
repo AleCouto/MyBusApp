@@ -11,7 +11,8 @@ public enum FavoriteProvider
     Metropolitana,
     CarrisLisboa,
     Transitland,
-    Cp
+    Cp,
+    Fertagus
 }
 
 public sealed record TransitFavorite(
@@ -20,7 +21,8 @@ public sealed record TransitFavorite(
     string StopId,
     string StopName,
     string? LineNumber = null,
-    string? DestinationId = null)
+    string? DestinationId = null,
+    string? DirectionId = null)
 {
     public bool HasSameIdentityAs(TransitFavorite other)
     {
@@ -30,7 +32,8 @@ public sealed record TransitFavorite(
                Provider == other.Provider &&
                string.Equals(StopId, other.StopId, StringComparison.Ordinal) &&
                (Mode == FavoriteTransportMode.Bus
-                   ? string.Equals(LineNumber, other.LineNumber, StringComparison.Ordinal)
+                   ? string.Equals(LineNumber, other.LineNumber, StringComparison.Ordinal) &&
+                     string.Equals(DirectionId, other.DirectionId, StringComparison.Ordinal)
                    : string.Equals(DestinationId, other.DestinationId, StringComparison.Ordinal));
     }
 }

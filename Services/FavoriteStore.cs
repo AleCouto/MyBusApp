@@ -69,7 +69,12 @@ public sealed class FavoriteStore(IJSRuntime jsRuntime)
             if (favorites.Any(existing => existing.HasSameIdentityAs(favorite)))
                 return false;
 
-            favorites.Add(favorite);
+            var legacyIndex = FindLegacyBusFavoriteIndex(favorites, favorite);
+            if (legacyIndex >= 0)
+                favorites[legacyIndex] = favorite;
+            else
+                favorites.Add(favorite);
+
             await SaveCoreAsync(favorites);
             return true;
         }
@@ -113,7 +118,11 @@ public sealed class FavoriteStore(IJSRuntime jsRuntime)
                 if (index >= 0)
                     return true;
 
-                favorites.Add(favorite);
+                var legacyIndex = FindLegacyBusFavoriteIndex(favorites, favorite);
+                if (legacyIndex >= 0)
+                    favorites[legacyIndex] = favorite;
+                else
+                    favorites.Add(favorite);
             }
             else
             {
@@ -158,13 +167,37 @@ public sealed class FavoriteStore(IJSRuntime jsRuntime)
             FavoriteTransportMode.Bus =>
                 favorite.Provider != FavoriteProvider.Cp &&
                 !string.IsNullOrWhiteSpace(favorite.LineNumber) &&
-                favorite.DestinationId is null,
+                favorite.DestinationId is null &&
+                (favorite.DirectionId is null || !string.IsNullOrWhiteSpace(favorite.DirectionId)),
             FavoriteTransportMode.Train =>
-                favorite.Provider == FavoriteProvider.Cp &&
+                (favorite.Provider is FavoriteProvider.Cp or FavoriteProvider.Fertagus) &&
                 string.IsNullOrWhiteSpace(favorite.LineNumber) &&
+                favorite.DirectionId is null &&
                 (favorite.DestinationId is null || !string.IsNullOrWhiteSpace(favorite.DestinationId)),
             _ => false
         };
+    }
+
+    private static int FindLegacyBusFavoriteIndex(
+        IReadOnlyList<TransitFavorite> favorites,
+        TransitFavorite favorite)
+    {
+        if (favorite.Mode != FavoriteTransportMode.Bus ||
+            string.IsNullOrWhiteSpace(favorite.DirectionId))
+            return -1;
+
+        for (var index = 0; index < favorites.Count; index++)
+        {
+            var existing = favorites[index];
+            if (existing.Mode == FavoriteTransportMode.Bus &&
+                existing.Provider == favorite.Provider &&
+                string.Equals(existing.StopId, favorite.StopId, StringComparison.Ordinal) &&
+                string.Equals(existing.LineNumber, favorite.LineNumber, StringComparison.Ordinal) &&
+                string.IsNullOrWhiteSpace(existing.DirectionId))
+                return index;
+        }
+
+        return -1;
     }
 
     private static bool HasDuplicateFavorites(IReadOnlyCollection<TransitFavorite> favorites)

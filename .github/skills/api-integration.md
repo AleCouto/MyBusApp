@@ -14,10 +14,15 @@ Each API has its own:
 - **DTO model** in `Models/DTOs/{Provider}/`
 - **Domain model** mapping in `Models/Domain/BusModels.cs`
 
+### Adapter patterns
+- **Live provider API** (e.g. `CarrisMetropolitanaService`, `TransitlandService`): provider-specific DTOs in `Models/DTOs/{Provider}/`, mapped to domain models inside the service.
+- **Static GTFS** (e.g. `CpService`, `FertagusService`, Carris Lisboa static): the feed is downloaded and normalized offline by `Tools/GtfsDataGenerator` into the shared, versioned `GtfsStatic*` format (`Models/StaticData/`). The app consumes that JSON through a provider-specific service (`CpService`, `FertagusService`) built on the shared `GtfsTrainService`. There is **no per-provider DTO folder** for these feeds because the browser never parses the provider's raw GTFS (see the roadmap rule: no GTFS ZIPs in the browser).
+
 ### Current runtime configuration
-- `TransitlandService` is the primary provider.
-- `CarrisMetropolitanaService` is the fallback provider.
-- `CarrisLisboaService` is present but not registered because its public API is currently unavailable.
+- `CarrisMetropolitanaService` is the primary bus provider, with realtime arrivals.
+- `CarrisLisboaService` is the static GTFS bus fallback.
+- `TransitlandService` is the last bus fallback.
+- `GtfsTrainService` serves CP and Fertagus through `ITrainService` (scheduled times only).
 
 ## Objectives
 - Integrate APIs safely, predictably, and resiliently.

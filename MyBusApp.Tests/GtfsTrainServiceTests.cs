@@ -10,7 +10,7 @@ using Xunit;
 
 namespace MyBusApp.Tests;
 
-public sealed class CpServiceTests
+public sealed class GtfsTrainServiceTests
 {
     [Fact]
     public async Task GetStationsAsync_RequestsDefaultManifestRelativeToProvidedApplicationBaseUrl()
@@ -117,7 +117,7 @@ public sealed class CpServiceTests
             2,
             "Tie test",
             "Tie test",
-            [new("route-tie|Terminal", routeId, "Terminal")],
+            [new("route-tie|unknown", routeId, "Terminal")],
             [
                 new("alpha-stop", "Alpha Stop", ""),
                 new("beta-stop", "Beta Stop", ""),
@@ -148,6 +148,109 @@ public sealed class CpServiceTests
 
         Assert.All(results, result => Assert.Equal([expectedDirectionName], result));
         Assert.All(results.Skip(1), result => Assert.Equal(results[0], result));
+    }
+
+    [Fact]
+    public async Task GetDestinationsAsync_SplitsBidirectionalRoutesAndFiltersDeparturesByDirection()
+    {
+        var now = TimeZoneInfo.ConvertTime(
+            DateTimeOffset.UtcNow,
+            TimeZoneInfo.FindSystemTimeZoneById("Europe/Lisbon"));
+        var baseSeconds = now.Hour * 3600 + now.Minute * 60 + now.Second + 600;
+        var line = new GtfsStaticLine(
+            2,
+            "Fertagus",
+            "Lisboa - Setúbal",
+            [
+                new("A_0|0", "A_0", "Lisboa - Setúbal"),
+                new("A_0|1", "A_0", "Lisboa - Setúbal")
+            ],
+            [
+                new("roma", "Roma-Areeiro", ""),
+                new("pragal", "Pragal", ""),
+                new("setubal", "Setúbal", "")
+            ],
+            [
+                new("out", "A_0", "service", "0", "Setúbal"),
+                new("in", "A_0", "service", "1", "Roma-Areeiro")
+            ],
+            [
+                new("out", "roma", baseSeconds, baseSeconds + 60, 1),
+                new("out", "pragal", baseSeconds + 120, baseSeconds + 120, 2),
+                new("out", "setubal", baseSeconds + 240, baseSeconds + 240, 3),
+                new("in", "setubal", baseSeconds + 60, baseSeconds + 60, 1),
+                new("in", "pragal", baseSeconds + 180, baseSeconds + 180, 2),
+                new("in", "roma", baseSeconds + 300, baseSeconds + 300, 3)
+            ],
+            [new("service", "20260101", "20261231", true, true, true, true, true, true, true)],
+            []);
+        var service = CreateServiceForLine(line);
+
+        var destinations = await service.GetDestinationsAsync("pragal");
+
+        Assert.Equal(2, destinations.Count);
+        var outbound = Assert.Single(destinations, direction => direction.Name == "Roma-Areeiro → Setúbal");
+        var inbound = Assert.Single(destinations, direction => direction.Name == "Setúbal → Roma-Areeiro");
+        Assert.NotEqual(outbound.Id, inbound.Id);
+
+        var outboundDepartures = await service.GetDeparturesAsync("pragal", outbound.Id);
+        var inboundDepartures = await service.GetDeparturesAsync("pragal", inbound.Id);
+
+        Assert.NotEmpty(outboundDepartures);
+        Assert.NotEmpty(inboundDepartures);
+        Assert.All(outboundDepartures, departure => Assert.Equal("Setúbal", departure.Destination));
+        Assert.All(inboundDepartures, departure => Assert.Equal("Roma-Areeiro", departure.Destination));
+    }
+
+    [Fact]
+    public async Task ProviderServices_RequestTheirOwnStaticDataManifest()
+    {
+        Uri? cpManifest = null;
+        Uri? fertagusManifest = null;
+        var cpHandler = new FakeHandler(request =>
+        {
+            cpManifest = request.RequestUri;
+            return JsonResponse(new GtfsStaticManifest(2, []));
+        });
+        var fertagusHandler = new FakeHandler(request =>
+        {
+            fertagusManifest = request.RequestUri;
+            return JsonResponse(new GtfsStaticManifest(2, []));
+        });
+        var settings = new ApiSettings();
+        settings.Cp.StaticDataBaseUrl = "https://static.test/cp/";
+        settings.Fertagus.StaticDataBaseUrl = "https://static.test/fertagus/";
+
+        var cpService = new CpService(settings, new HttpClient(cpHandler) { BaseAddress = new Uri("https://static.test/") });
+        var fertagusService = new FertagusService(settings, new HttpClient(fertagusHandler) { BaseAddress = new Uri("https://static.test/") });
+
+        await cpService.GetStationsAsync();
+        await fertagusService.GetStationsAsync();
+
+        Assert.Equal("CP", cpService.OperatorName);
+        Assert.Equal("Fertagus", fertagusService.OperatorName);
+        Assert.Equal("https://static.test/cp/manifest.json", cpManifest?.ToString());
+        Assert.Equal("https://static.test/fertagus/manifest.json", fertagusManifest?.ToString());
+    }
+
+    [Fact]
+    public void FertagusStaticData_HasExpectedLineStationsAndDirections()
+    {
+        var directory = FindFertagusDataDirectory();
+        var manifest = JsonSerializer.Deserialize<GtfsStaticManifest>(
+            File.ReadAllText(Path.Combine(directory, "manifest.json")));
+        Assert.NotNull(manifest);
+        Assert.Equal(2, manifest.Version);
+        var manifestLine = Assert.Single(manifest.Lines);
+        Assert.Equal("Fertagus", manifestLine.Number);
+
+        var line = JsonSerializer.Deserialize<GtfsStaticLine>(
+            File.ReadAllText(Path.Combine(directory, manifestLine.File)));
+        Assert.NotNull(line);
+        Assert.Equal(14, line.Stops.Count);
+        Assert.Equal(4, line.Directions.Count);
+        Assert.Equal(2, line.Directions.Select(direction => direction.RouteId).Distinct().Count());
+        Assert.NotEmpty(line.Trips);
     }
 
     [Fact]
@@ -365,7 +468,7 @@ public sealed class CpServiceTests
         Assert.False(string.IsNullOrWhiteSpace(destination.Name));
     }
 
-    private static CpService CreateService(string? apLineJson = null, bool onlyApLine = false)
+    private static GtfsTrainService CreateService(string? apLineJson = null, bool onlyApLine = false)
     {
         var lines = new Dictionary<string, GtfsStaticLine>(StringComparer.Ordinal)
         {
@@ -407,7 +510,7 @@ public sealed class CpServiceTests
         });
     }
 
-    private static CpService CreateService(HttpMessageHandler handler)
+    private static GtfsTrainService CreateService(HttpMessageHandler handler)
     {
         var settings = new ApiSettings();
         settings.Cp.StaticDataBaseUrl = "https://static.test/cp/";
@@ -430,6 +533,33 @@ public sealed class CpServiceTests
             stopTime[fieldName] = "invalid";
 
         return json.ToJsonString();
+    }
+
+    private static GtfsTrainService CreateServiceForLine(GtfsStaticLine line)
+    {
+        var manifest = new GtfsStaticManifest(2, [new(line.Number, "lines/line.json", line.Name)]);
+        var handler = new FakeHandler(request =>
+            request.RequestUri!.AbsolutePath.EndsWith("manifest.json", StringComparison.Ordinal)
+                ? JsonResponse(manifest)
+                : JsonResponse(line));
+        var settings = new ApiSettings();
+        settings.Cp.StaticDataBaseUrl = "https://static.test/cp/";
+        return new CpService(settings, new HttpClient(handler)
+        {
+            BaseAddress = new Uri("https://static.test/")
+        });
+    }
+
+    private static string FindFertagusDataDirectory()
+    {
+        for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
+        {
+            var fertagusDataDirectory = Path.Combine(directory.FullName, "wwwroot", "data", "fertagus");
+            if (File.Exists(Path.Combine(fertagusDataDirectory, "manifest.json")))
+                return fertagusDataDirectory;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate wwwroot/data/fertagus/ from the test assembly directory.");
     }
 
     private static string FindCpDataDirectory()

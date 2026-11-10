@@ -114,8 +114,13 @@ public class TransitlandService : IBusService
             .ToList();
     }
 
-    public async Task<List<BusArrival>> GetArrivalsAsync(string stopId, string lineId)
+    public async Task<List<BusArrival>> GetArrivalsAsync(string stopId, string lineId, string? directionId = null)
     {
+        // Os horários do Transitland não expõem o pattern/trip de cada partida, pelo que
+        // não é possível filtrar por sentido sem consultas adicionais.
+        if (!string.IsNullOrWhiteSpace(directionId))
+            _logger.Warning(nameof(TransitlandService), "Transitland schedules do not expose the direction; showing all directions for the route.");
+
         // Hora local de Lisboa — não UTC
         var lisboaZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Lisbon");
         var nowLocal = TimeZoneInfo.ConvertTime(DateTime.UtcNow, lisboaZone);

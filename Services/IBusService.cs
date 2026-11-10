@@ -15,6 +15,6 @@ public interface IBusService
     // Obtém as paragens de um sentido específico
     Task<List<BusStop>> GetStopsAsync(string directionId, string lineId);
     
-    // Obtém previsões em tempo real
-    Task<List<BusArrival>> GetArrivalsAsync(string stopId, string lineId);
+    // Obtém previsões em tempo real; quando indicado, apenas para o sentido escolhido
+    Task<List<BusArrival>> GetArrivalsAsync(string stopId, string lineId, string? directionId = null);
 }

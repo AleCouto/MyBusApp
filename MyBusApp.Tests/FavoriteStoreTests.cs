@@ -142,6 +142,25 @@ public sealed class FavoriteStoreTests
     }
 
     [Fact]
+    public async Task TrainFavorites_StayDistinctAcrossOperatorsForTheSameStationAndDestination()
+    {
+        var store = new FavoriteStore(new MemoryJsRuntime());
+        var cpFavorite = new TransitFavorite(
+            FavoriteTransportMode.Train,
+            FavoriteProvider.Cp,
+            "roma-id",
+            "Roma-Areeiro",
+            DestinationId: "route-1");
+        var fertagusFavorite = cpFavorite with { Provider = FavoriteProvider.Fertagus };
+
+        Assert.True(await store.AddAsync(cpFavorite));
+        Assert.True(await store.AddAsync(fertagusFavorite));
+        Assert.False(await store.AddAsync(cpFavorite));
+
+        Assert.Equal([cpFavorite, fertagusFavorite], await store.LoadAsync());
+    }
+
+    [Fact]
     public async Task TrainFavorites_AreUniqueByProviderStationAndDestination()
     {
         var jsRuntime = new MemoryJsRuntime();
@@ -408,6 +427,63 @@ public sealed class FavoriteStoreTests
 
         Assert.Equal(originalJson, jsRuntime.StoredValue);
         Assert.Equal(1, jsRuntime.SetItemCallCount);
+    }
+
+    [Fact]
+    public async Task BusFavorites_AreUniqueByProviderLineStopAndDirection()
+    {
+        var store = new FavoriteStore(new MemoryJsRuntime());
+        var toLisbon = new TransitFavorite(
+            FavoriteTransportMode.Bus,
+            FavoriteProvider.Metropolitana,
+            "stop-1",
+            "Paragem",
+            "4725",
+            DirectionId: "4725_0_2");
+        var toSetubal = toLisbon with { DirectionId = "4725_0_1" };
+
+        Assert.True(await store.AddAsync(toLisbon));
+        Assert.True(await store.AddAsync(toSetubal));
+        Assert.False(await store.AddAsync(toLisbon));
+
+        Assert.Equal([toLisbon, toSetubal], await store.LoadAsync());
+    }
+
+    [Fact]
+    public async Task AddAsync_UpgradesLegacyBusFavoriteWithTheSelectedDirection()
+    {
+        var store = new FavoriteStore(new MemoryJsRuntime());
+        var legacy = new TransitFavorite(
+            FavoriteTransportMode.Bus,
+            FavoriteProvider.Metropolitana,
+            "stop-1",
+            "Paragem",
+            "4725");
+        var directed = legacy with { DirectionId = "4725_0_2" };
+        await store.SaveAsync([legacy]);
+
+        Assert.True(await store.AddAsync(directed));
+
+        Assert.Equal([directed], await store.LoadAsync());
+    }
+
+    [Fact]
+    public async Task SetFavoriteAsync_UpgradesLegacyBusFavoriteWithoutAddingADuplicate()
+    {
+        var store = new FavoriteStore(new MemoryJsRuntime());
+        var legacy = new TransitFavorite(
+            FavoriteTransportMode.Bus,
+            FavoriteProvider.Metropolitana,
+            "stop-1",
+            "Paragem",
+            "4725");
+        var directed = legacy with { DirectionId = "4725_0_2" };
+        await store.SaveAsync([legacy]);
+
+        Assert.False(await store.IsFavoriteAsync(directed));
+        Assert.True(await store.SetFavoriteAsync(directed, true));
+
+        Assert.Equal([directed], await store.LoadAsync());
     }
 
     private sealed class MemoryJsRuntime : IJSRuntime

@@ -42,6 +42,13 @@ builder.Services.AddScoped<ITrainService>(sp =>
 		new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) },
 		sp.GetRequiredService<AppLogger>()));
 
+// Fertagus — serviço ferroviário de horários estáticos
+builder.Services.AddScoped<ITrainService>(sp =>
+	new FertagusService(
+		apiSettings,
+		new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) },
+		sp.GetRequiredService<AppLogger>()));
+
 builder.Services.AddScoped<FavoriteStore>();
 builder.Services.AddScoped<BusServiceRouter>();
 builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });

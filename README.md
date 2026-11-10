@@ -32,12 +32,12 @@ Localizada em `Models/DTOs/`, contém as classes que representam o JSON bruto de
 * **`IBusService`**: Interface que define o contrato dos providers de autocarros.
 * **`CarrisMetropolitanaService`**: Consome linhas, paragens e chegadas da API da Carris Metropolitana.
 * **`CarrisLisboaService`**: Consulta dados GTFS estáticos publicados como JSON por linha.
-* **`CpService`**: Consulta horários GTFS estáticos no modo Comboios.
+* **`CpService` / `FertagusService`**: Serviços por operador sobre o motor estático `GtfsTrainService`, no modo Comboios.
 * **`TransitlandService`**: Fonte/agregador de autocarros de último recurso; a cobertura das pesquisas depende dos endpoints disponíveis.
 * **`FavoriteStore`**: Persiste os favoritos no `localStorage` do browser.
 
 ### 4. Injeção de Dependência Polimórfica
-A resolução de autocarros usa `BusServiceRouter` e providers `IBusService`. A CP implementa separadamente `ITrainService`; não é modelada como autocarro. Metro e Barcos estão presentes apenas como modos indisponíveis, sem providers ou horários simulados.
+A resolução de autocarros usa `BusServiceRouter` e providers `IBusService`. CP e Fertagus implementam separadamente `ITrainService`; não são modeladas como autocarro. Metro e Barcos estão presentes apenas como modos indisponíveis, sem providers ou horários simulados.
 
 ## 🛠️ Funcionalidades
 
@@ -107,9 +107,16 @@ A aplicação descarrega o manifesto uma vez por sessão e apenas o ficheiro da 
 
 ### CP — GTFS estático
 - **Dados:** Manifesto e horários GTFS estáticos versionados em `wwwroot/data/cp/`.
-- **Serviço:** `Services/CpService.cs`, no contrato ferroviário `ITrainService`.
+- **Serviço:** `Services/CpService.cs` (sobre `GtfsTrainService`), no contrato ferroviário `ITrainService`.
 - **Consulta:** Operador → estação → destino/sentido → próximas partidas.
 - **Estado:** Horários agendados; não há integração realtime CP.
+
+### Fertagus — GTFS estático
+- **Fonte:** GTFS oficial em `https://www.fertagus.pt/GTFSTMLzip/Fertagus_GTFS.zip`.
+- **Dados:** Manifesto e horários GTFS estáticos versionados em `wwwroot/data/fertagus/`.
+- **Geração:** `dotnet run --project Tools/GtfsDataGenerator/GtfsDataGenerator.csproj -- --gtfs <fertagus.zip> --output wwwroot/data/fertagus`.
+- **Serviço:** `Services/FertagusService.cs` (sobre `GtfsTrainService`).
+- **Estado:** Horários agendados (calendário 2026-09-14 a 2027-03-14); não há realtime identificado.
 
 ### Transitland 🗺️
 - **URL Base:** `https://transit.land/api/v2/rest/`
@@ -208,7 +215,9 @@ MyBusApp/
 │   ├── BusServiceRouter.cs
 │   ├── CarrisMetropolitanaService.cs
 │   ├── CarrisLisboaService.cs
+│   ├── GtfsTrainService.cs
 │   ├── CpService.cs
+│   ├── FertagusService.cs
 │   └── TransitlandService.cs
 ├── Pages/
 │   └── Home.razor                # Pesquisa contextual por modo

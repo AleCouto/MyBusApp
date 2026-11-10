@@ -71,10 +71,10 @@ public class CarrisMetropolitanaService : IBusService
             .ToList();
     }
 
-    public async Task<List<BusArrival>> GetArrivalsAsync(string stopId, string lineId)
+    public async Task<List<BusArrival>> GetArrivalsAsync(string stopId, string lineId, string? directionId = null)
     {
         var rawArrivals = await GetArrivalsByStopIdAsync(stopId);
-        _logger.Info(nameof(CarrisMetropolitanaService), $"Arrivals loaded for stop '{stopId}': {rawArrivals.Count} records; filtering for line '{lineId}'.");
+        _logger.Info(nameof(CarrisMetropolitanaService), $"Arrivals loaded for stop '{stopId}': {rawArrivals.Count} records; filtering for line '{lineId}' and direction '{directionId ?? "any"}'.");
 
         var publicLineNumber = _cachedLines?
             .FirstOrDefault(line => line.Id == lineId)?.ShortName;
@@ -85,6 +85,8 @@ public class CarrisMetropolitanaService : IBusService
                 (RemoveOperatorPrefix(a.LineId) == lineId ||
                  RemoveOperatorPrefix(a.RouteId) == lineId ||
                  RemoveOperatorPrefix(a.PatternId).StartsWith(lineId + "_")) &&
+                (string.IsNullOrWhiteSpace(directionId) ||
+                 RemoveOperatorPrefix(a.PatternId) == directionId) &&
                 TryGetArrivalTime(a, out var arrivalTime) && arrivalTime >= currentTime)
             .OrderBy(a => GetArrivalSortTime(a))
             .Take(5)

@@ -34,6 +34,48 @@ public class CarrisLisboaStaticDataTests
     }
 
     [Fact]
+    public async Task GetDirectionsAsync_NamesDirectionsByTheirEndpoints()
+    {
+        var line = new GtfsStaticLine(
+            2,
+            "714",
+            "Cais Sodré - Outurela",
+            [
+                new("102_0|0", "102_0", "Cais Sodré - Outurela"),
+                new("102_0|1", "102_0", "Cais Sodré - Outurela")
+            ],
+            [
+                new("stop-a", "Cais Sodré", "Lisboa"),
+                new("stop-b", "Algés", "Lisboa"),
+                new("stop-c", "Outurela", "Lisboa")
+            ],
+            [
+                new("outbound", "102_0", "active", "0", "Cais Sodré - Outurela"),
+                new("inbound", "102_0", "active", "1", "Cais Sodré - Outurela")
+            ],
+            [
+                new("outbound", "stop-a", 3600, 3600, 1),
+                new("outbound", "stop-b", 3700, 3700, 2),
+                new("outbound", "stop-c", 3800, 3800, 3),
+                new("inbound", "stop-c", 3600, 3600, 1),
+                new("inbound", "stop-b", 3700, 3700, 2),
+                new("inbound", "stop-a", 3800, 3800, 3)
+            ],
+            [new("active", "20260101", "20261231", true, true, true, true, true, true, true)],
+            []);
+        var handler = new FakeHandler(request => request.RequestUri!.AbsolutePath.EndsWith("manifest.json", StringComparison.Ordinal)
+            ? JsonResponse(new GtfsStaticManifest(2, [new("714", "lines/714.json", line.Name)]))
+            : JsonResponse(line));
+        var service = CreateService(handler);
+
+        var directions = await service.GetDirectionsAsync("714");
+
+        Assert.Equal(
+            ["Cais Sodré → Outurela", "Outurela → Cais Sodré"],
+            directions.Select(direction => direction.Name));
+    }
+
+    [Fact]
     public void VersionedLineJson_UsesCurrentStopTimeSchema()
     {
         var manifestPath = FindRepositoryFile("wwwroot/data/carris-lisboa/manifest.json");
@@ -176,6 +218,32 @@ public class CarrisLisboaStaticDataTests
             new DateTimeOffset(date, TimeSpan.FromHours(1)));
 
         Assert.Equal(["01:01", "02:00"], arrivals.Select(arrival => arrival.DisplayTime));
+    }
+
+    [Fact]
+    public void GetUpcomingArrivals_FiltersByRequestedDirection()
+    {
+        var date = new DateTime(2026, 9, 18);
+        var line = CreateLine(
+            trips: [
+                new("outbound", "102_0", "active", "0", "To Outurela"),
+                new("inbound", "102_0", "active", "1", "To Cais Sodre")
+            ],
+            stopTimes: [
+                new("outbound", "stop-1", 3600, 3660, 1),
+                new("inbound", "stop-1", 7200, 7200, 1)
+            ],
+            calendar: [new("active", "20260918", "20260918", true, true, true, true, true, true, true)]);
+        var now = new DateTimeOffset(date, TimeSpan.FromHours(1));
+
+        var all = CarrisLisboaService.GetUpcomingArrivals(line, "stop-1", now);
+        var outbound = CarrisLisboaService.GetUpcomingArrivals(line, "stop-1", now, "102_0|0");
+        var inbound = CarrisLisboaService.GetUpcomingArrivals(line, "stop-1", now, "102_0|1");
+
+        Assert.Equal(["To Outurela", "To Cais Sodre"], all.Select(arrival => arrival.Destination));
+        Assert.Equal(["To Outurela"], outbound.Select(arrival => arrival.Destination));
+        Assert.Equal(["To Cais Sodre"], inbound.Select(arrival => arrival.Destination));
+        Assert.Empty(CarrisLisboaService.GetUpcomingArrivals(line, "stop-1", now, "invalid-direction"));
     }
 
     [Fact]
