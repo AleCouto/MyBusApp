@@ -1,7 +1,9 @@
 # MyBusApp --- Plano de Desenvolvimento
 
-> **Fonte da verdade do roadmap.** Atualizar no fecho de cada milestone
-> ou quando uma decisão alterar a sequência.
+> **Fonte da verdade do roadmap.** Único plano ativo do projeto; planos
+> anteriores estão em [`archive/`](archive/README.md) e não devem ser
+> seguidos. Atualizar no fecho de cada milestone ou quando uma decisão
+> alterar a sequência.
 >
 > **Estado:** `[X]` concluído; `[ ]` por realizar; `[~]` em curso; `[!]`
 > bloqueado/dependente de decisão.
@@ -89,8 +91,10 @@ condicionar a arquitetura nem atrasar o objetivo principal.
 ## 3. Princípios técnicos e restrições
 
 -   Manter .NET 9, Blazor WebAssembly, Bootstrap e `System.Text.Json`.
--   Consultar `.github/copilot-instructions.md` e as skills relevantes
-    em `.github/skills/` antes de qualquer tarefa de desenvolvimento.
+-   Ler [`AGENTS.md`](../AGENTS.md) e, conforme a tarefa,
+    [`architecture.md`](architecture.md), [`domain.md`](domain.md),
+    [`conventions.md`](conventions.md) ou uma skill em
+    `.github/skills/`.
 -   Fazer alterações pequenas, incrementais e limitadas ao milestone
     atual.
 -   Preservar serviços existentes que já funcionam.

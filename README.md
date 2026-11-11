@@ -14,30 +14,24 @@ Os favoritos são guardados no browser e podem ser reordenados. Para autocarros,
 
 ## 🏗️ Arquitetura e Design Patterns
 
-O projeto foi desenvolvido seguindo princípios de **Clean Code** e focado na escalabilidade através do **Adapter Pattern**.
+Aplicação client-side em Blazor WASM, com **Adapter Pattern**: cada fonte
+externa é traduzida para modelos de domínio próprios.
 
-### 1. Camada de Domínio (Domain Models)
-Localizada em `Models/Domain/`, esta camada define a "Língua Comum" da aplicação.
-* `BusLine`: Representação unificada de uma linha.
-* `BusDirection`: Sentidos de circulação (Ida/Volta).
-* `BusStop`: Paragens físicas.
-* `BusArrival`: Previsões de chegada, com indicação de tempo real ou agendado.
-* `TrainStation`, `TrainDirection` e `TrainDeparture`: conceitos ferroviários próprios.
-* `TransitFavorite`: contexto de linha/paragem ou estação guardado pelo utilizador.
+- **Domínio** (`Models/Domain/`): `BusLine`, `BusDirection`, `BusStop`,
+  `BusArrival`, `TrainStation`, `TrainDirection`, `TrainDeparture` e
+  `TransitFavorite`.
+- **DTOs** (`Models/DTOs/`): representam o JSON bruto de cada API e isolam as
+  mudanças externas do resto da aplicação.
+- **Serviços** (`Services/`): `IBusService` para autocarros, `ITrainService`
+  para comboios, `GtfsTrainService` como motor estático partilhado e
+  `FavoriteStore` para a persistência.
 
-### 2. Camada de DTOs (Data Transfer Objects)
-Localizada em `Models/DTOs/`, contém as classes que representam o JSON bruto de cada API externa. Isto isola as mudanças nas APIs externas do resto da aplicação.
+A resolução de autocarros passa pelo `BusServiceRouter`, que tenta os providers
+por prioridade. CP e Fertagus são serviços ferroviários e não são modelados
+como autocarro; metro e barcos existem apenas como modos indisponíveis.
 
-### 3. Camada de Serviços (Abstração)
-* **`IBusService`**: Interface que define o contrato dos providers de autocarros.
-* **`CarrisMetropolitanaService`**: Consome linhas, paragens e chegadas da API da Carris Metropolitana.
-* **`CarrisLisboaService`**: Consulta dados GTFS estáticos publicados como JSON por linha.
-* **`CpService` / `FertagusService`**: Serviços por operador sobre o motor estático `GtfsTrainService`, no modo Comboios.
-* **`TransitlandService`**: Fonte/agregador de autocarros de último recurso; a cobertura das pesquisas depende dos endpoints disponíveis.
-* **`FavoriteStore`**: Persiste os favoritos no `localStorage` do browser.
-
-### 4. Injeção de Dependência Polimórfica
-A resolução de autocarros usa `BusServiceRouter` e providers `IBusService`. CP e Fertagus implementam separadamente `ITrainService`; não são modeladas como autocarro. Metro e Barcos estão presentes apenas como modos indisponíveis, sem providers ou horários simulados.
+Detalhe técnico completo (DI, fluxos, dados estáticos, testes):
+[`docs/architecture.md`](docs/architecture.md).
 
 ## 🛠️ Funcionalidades
 
@@ -200,44 +194,50 @@ Toda a configuração das APIs está centralizada em dois ficheiros:
 
 ```text
 MyBusApp/
+├── AGENTS.md                     # Ponto de entrada para agentes
+├── docs/                         # Arquitetura, domínio, convenções, roadmap, ADRs
+├── .github/skills/               # Procedimentos: add-operator, gtfs-pipeline
 ├── Configuration/
 │   └── Configuration.cs          # Configuração tipada (ApiSettings)
 ├── Models/
-│   ├── Domain/                    # Modelos Bus/Train e favoritos
+│   ├── Domain/                   # Modelos Bus/Train e favoritos
 │   └── DTOs/                     # Objetos de transferência de dados (JSON)
 │       ├── CarrisMetropolitana/  # DTOs específicos da Carris Metropolitana
-│       ├── CarrisLisboa/         # DTOs específicos da Carris Lisboa
 │       └── Transitland/          # DTOs específicos do Transitland
 ├── Services/
 │   ├── IBusService.cs            # Contrato dos providers de autocarros
 │   ├── ITrainService.cs          # Contrato ferroviário
-│   ├── FavoriteStore.cs          # Persistência browser dos favoritos
-│   ├── BusServiceRouter.cs
+│   ├── BusServiceRouter.cs       # Prioridade e fallback entre autocarros
 │   ├── CarrisMetropolitanaService.cs
 │   ├── CarrisLisboaService.cs
-│   ├── GtfsTrainService.cs
+│   ├── GtfsTrainService.cs       # Motor estático partilhado dos comboios
 │   ├── CpService.cs
 │   ├── FertagusService.cs
-│   └── TransitlandService.cs
+│   ├── TransitlandService.cs
+│   └── FavoriteStore.cs          # Persistência browser dos favoritos
 ├── Pages/
-│   └── Home.razor                # Pesquisa contextual por modo
+│   ├── Home.razor                # Favoritos e próximas partidas
+│   ├── Buses.razor
+│   ├── Trains.razor
+│   └── Metro.razor / Boats.razor # Modos indisponíveis
 ├── Components/
 │   └── FavoritesDashboard.razor  # Partidas dos favoritos
 ├── Layout/
-│   ├── MainLayout.razor
-│   └── NavMenu.razor
+├── Tools/GtfsDataGenerator/      # Gerador offline GTFS → JSON
+├── MyBusApp.Tests/               # Testes xUnit
 ├── wwwroot/
 │   ├── appsettings.json          # Configuração das APIs
+│   ├── data/                     # JSON estáticos por operador
 │   └── css/app.css               # Estilos globais
 └── Program.cs                    # Registo de serviços e DI
 ```
 
 ## 🔮 Adicionar um Novo Provedor
 
-Para adicionar um provider:
+O procedimento completo está em
+[`.github/skills/add-operator/SKILL.md`](.github/skills/add-operator/SKILL.md).
 
-1. Criar DTOs em `Models/DTOs/{NovoProvedor}/`
-2. Implementar o contrato específico do modo (`IBusService` ou `ITrainService`) num serviço
-3. Registar o serviço no `Program.cs` no modo correspondente.
-
-Um novo provider de autocarros pode ser resolvido pelo router. A experiência de favoritos ou os fluxos de outros modos podem exigir alterações explícitas na interface.
+Em resumo: preencher a ficha de decisão do operador, escolher o contrato do
+modo (`IBusService` ou `ITrainService`), registar em `Program.cs`, atualizar
+favoritos e interface, e cobrir com testes. Para fontes GTFS, ver
+[`.github/skills/gtfs-pipeline/SKILL.md`](.github/skills/gtfs-pipeline/SKILL.md).

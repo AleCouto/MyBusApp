@@ -17,7 +17,7 @@
     <div class="row w-100 justify-content-center">
         <div class="col-12 col-md-8 col-lg-6 mb-4">
             <div class="input-group shadow-sm">
-                <span class="input-group-text bg-white"><i class="bi bi-search" aria-hidden="true"></i></span>
+                <span class="input-group-text bg-white" aria-hidden="true">🔍</span>
                 <input class="form-control"
                        placeholder="Digite o número da linha (ex: 1612)"
                        @bind="lineNumber"
@@ -146,7 +146,7 @@
                                         <h5 class="mb-0 fw-bold @(arrival.IsRealTime ? "text-success" : "text-dark")">
                                             @if (arrival.IsRealTime)
                                             {
-                                                <i class="bi bi-broadcast me-1" aria-hidden="true"></i>
+                                                <span class="me-1" aria-hidden="true">🟢</span>
                                             }
                                             @arrival.DisplayTime
                                         </h5>

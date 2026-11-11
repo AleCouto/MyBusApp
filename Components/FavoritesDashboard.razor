@@ -15,7 +15,7 @@
         <div class="d-flex justify-content-between align-items-center mb-3">
             <h2 id="favorites-heading" class="h4 mb-0">Próximas partidas</h2>
             <button class="btn btn-outline-primary btn-sm" @onclick="RefreshAsync" disabled="@(!hasLoadedFavorites || isLoading)">
-                <i class="bi bi-arrow-clockwise me-1" aria-hidden="true"></i>Atualizar
+                <span class="me-1" aria-hidden="true">🔄</span>Atualizar
             </button>
         </div>
 
@@ -214,7 +214,7 @@
                                                                     <strong class="@(arrival.IsRealTime ? "text-success" : "text-dark")">
                                                                         @if (arrival.IsRealTime)
                                                                         {
-                                                                            <i class="bi bi-broadcast me-1" aria-hidden="true"></i>
+                                                                            <span class="me-1" aria-hidden="true">🟢</span>
                                                                         }
                                                                         @arrival.DisplayTime
                                                                     </strong>

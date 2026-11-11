@@ -1,14 +1,6 @@
-## .NET
-bin/
-obj/
-*.user
-*.suo
-*.userosscache
-*.sln.docstates
-
-## Visual Studio
-.vs/
-*.rsuser
+# Build e artefactos
+[Bb]in/
+[Oo]bj/
 [Dd]ebug/
 [Rr]elease/
 x64/
@@ -17,49 +9,38 @@ x86/
 [Aa][Rr][Mm]/
 [Aa][Rr][Mm]64/
 bld/
-[Bb]in/
-[Oo]bj/
+artifacts/
 [Ll]og/
 [Ll]ogs/
-
-## .NET Core
+*.nupkg
 project.lock.json
 project.fragment.lock.json
-artifacts/
 **/Properties/launchSettings.json
 
-## Nib-based packaging
-*.nupkg
-
-## JetBrains Rider
+# IDEs
+.vs/
 .idea/
 *.sln.iml
-
-## VS Code
 .vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
 
-## macOS
+# Sistema operativo
 .DS_Store
 *.swp
 *.lock
 ~$*
 
-## Blazor WebAssembly specific
+# Temporários locais (ferramentas, downloads, estado)
+.tmp/
+tmp/
+Library/
+
+# Fontes GTFS: o ZIP nunca é versionado (ver docs/decisions/0003-gtfs-processado-offline.md)
+*.gtfs.zip
+
+# Mapa/gzip gerados em wwwroot
 **/wwwroot/**/*.map
 **/wwwroot/**/*.gz
-
-# Carris Lisboa GTFS source and local generator output
-*.gtfs.zip
-Tools/GtfsDataGenerator/bin/
-Tools/GtfsDataGenerator/obj/
-
-## Build results
-[Dd]ebug/
-[Rr]elease/
-x64/
-x86/
-bld/
-[Bb]in/
-[Oo]bj/
-
-.DS_Store
