@@ -10,16 +10,21 @@ namespace MyBusApp.Tests;
 
 public sealed class CarrisMetropolitanaArrivalTests
 {
+    private static readonly TimeZoneInfo LisbonZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Lisbon");
+
+    private static TimeSpan LisbonNow()
+        => TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, LisbonZone).TimeOfDay;
+
     [Fact]
     public async Task GetArrivalsAsync_RecognizesPrefixedIdsAndPreservesExistingFilters()
     {
-        var currentTime = DateTime.Now.TimeOfDay;
+        var currentTime = LisbonNow();
         var earliestFutureTime = FormatApiTime(currentTime.Add(TimeSpan.FromMinutes(10)));
         var nextFutureTime = FormatApiTime(currentTime.Add(TimeSpan.FromMinutes(15)));
         var middleFutureTime = FormatApiTime(currentTime.Add(TimeSpan.FromMinutes(18)));
         var laterFutureTime = FormatApiTime(currentTime.Add(TimeSpan.FromMinutes(20)));
         var latestFutureTime = FormatApiTime(currentTime.Add(TimeSpan.FromMinutes(25)));
-        var pastTime = FormatApiTime(DateTime.Now.TimeOfDay.Subtract(TimeSpan.FromMinutes(30)));
+        var pastTime = FormatApiTime(LisbonNow().Subtract(TimeSpan.FromMinutes(30)));
         var arrivals = new[]
         {
             CreateArrival("[A2L1N]4725", "[A2L1N]4725_0", "[A2L1N]4725_0_2", latestFutureTime, "Prefixed line"),
@@ -154,7 +159,7 @@ public sealed class CarrisMetropolitanaArrivalTests
     [Fact]
     public async Task GetArrivalsAsync_FiltersByRequestedDirectionPattern()
     {
-        var currentTime = DateTime.Now.TimeOfDay;
+        var currentTime = LisbonNow();
         var body = JsonSerializer.Serialize(new[]
         {
             CreateArrival(
@@ -186,6 +191,75 @@ public sealed class CarrisMetropolitanaArrivalTests
     public async Task GetArrivalsAsync_ReturnsEmptyForSuccessfulEmptyResponse()
     {
         var arrivals = await QueryArrivalsAsync(HttpStatusCode.OK, "[]");
+
+        Assert.Empty(arrivals);
+    }
+
+    [Fact]
+    public async Task GetArrivalsAsync_UsesValidEstimateAndMarksItRealTime()
+    {
+        var now = LisbonNow();
+        var scheduled = FormatApiTime(now.Add(TimeSpan.FromMinutes(15)));
+        var estimated = FormatApiTime(now.Add(TimeSpan.FromMinutes(12)));
+        var body = JsonSerializer.Serialize(new[]
+        {
+            CreateArrival(
+                "[A2L1N]4725",
+                "[A2L1N]4725_0",
+                "[A2L1N]4725_0_1",
+                scheduled,
+                "Com previsão",
+                estimated)
+        });
+
+        var arrivals = await QueryArrivalsAsync(HttpStatusCode.OK, body, "4725");
+
+        var arrival = Assert.Single(arrivals);
+        Assert.True(arrival.IsRealTime);
+        Assert.Equal(estimated[..5], arrival.DisplayTime);
+    }
+
+    [Fact]
+    public async Task GetArrivalsAsync_FallsBackToScheduledWhenEstimateIsUnreadable()
+    {
+        var now = LisbonNow();
+        var scheduled = FormatApiTime(now.Add(TimeSpan.FromMinutes(10)));
+        var body = JsonSerializer.Serialize(new[]
+        {
+            CreateArrival(
+                "[A2L1N]4725",
+                "[A2L1N]4725_0",
+                "[A2L1N]4725_0_1",
+                scheduled,
+                "Sem previsão legível",
+                "not-a-time")
+        });
+
+        var arrivals = await QueryArrivalsAsync(HttpStatusCode.OK, body, "4725");
+
+        var arrival = Assert.Single(arrivals);
+        Assert.False(arrival.IsRealTime);
+        Assert.Equal(scheduled[..5], arrival.DisplayTime);
+    }
+
+    [Fact]
+    public async Task GetArrivalsAsync_DropsTripWhoseEstimateAlreadyPassed()
+    {
+        var now = LisbonNow();
+        var scheduled = FormatApiTime(now.Add(TimeSpan.FromMinutes(10)));
+        var estimateInThePast = FormatApiTime(now.Subtract(TimeSpan.FromMinutes(2)));
+        var body = JsonSerializer.Serialize(new[]
+        {
+            CreateArrival(
+                "[A2L1N]4725",
+                "[A2L1N]4725_0",
+                "[A2L1N]4725_0_1",
+                scheduled,
+                "Já passou",
+                estimateInThePast)
+        });
+
+        var arrivals = await QueryArrivalsAsync(HttpStatusCode.OK, body, "4725");
 
         Assert.Empty(arrivals);
     }
@@ -254,8 +328,9 @@ public sealed class CarrisMetropolitanaArrivalTests
         string routeId,
         string patternId,
         string scheduledArrival,
-        string headsign)
-        => new(lineId, "test-stop", routeId, scheduledArrival, string.Empty, headsign, patternId, 1);
+        string headsign,
+        string? estimatedArrival = null)
+        => new(lineId, "test-stop", routeId, scheduledArrival, estimatedArrival ?? string.Empty, headsign, patternId, 1);
 
     private static string FormatApiTime(TimeSpan time)
     {

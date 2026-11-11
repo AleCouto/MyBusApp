@@ -968,33 +968,58 @@ realtime, quando possível.
 **Fora do âmbito:** alterar código, criar serviços ou automatizar
 downloads.
 
-### \[ \] M13 --- Fallback realtime → programado
+### \[~\] M13 --- Fallback realtime → programado
 
 **Objetivo:** garantir que a consulta continua útil e correta quando
 previsões realtime não estão disponíveis.
 
--   [ ] Auditar comportamento atual de cada serviço integrado.
--   [ ] Identificar como cada serviço representa `IsRealTime` e a origem
+-   [x] Auditar comportamento atual de cada serviço integrado.
+-   [x] Identificar como cada serviço representa `IsRealTime` e a origem
     do horário.
--   [ ] Verificar respostas realtime vazias, indisponíveis, inválidas ou
+-   [x] Verificar respostas realtime vazias, indisponíveis, inválidas ou
     expiradas.
--   [ ] Definir critérios de validade e expiração por fonte.
--   [ ] Definir associação entre previsões realtime e
+-   [x] Definir critérios de validade e expiração por fonte.
+-   [x] Definir associação entre previsões realtime e
     serviços/paragens/viagens programados, quando necessária.
--   [ ] Definir regra de fallback por operador com base nas fontes
+-   [x] Definir regra de fallback por operador com base nas fontes
     confirmadas em M12.
--   [ ] Verificar se os modelos existentes suportam a distinção; alterar
+-   [x] Verificar se os modelos existentes suportam a distinção; alterar
     apenas se houver lacuna real.
--   [ ] Definir indicadores de interface para Tempo real, Agendado e
+-   [x] Definir indicadores de interface para Tempo real, Agendado e
     Indisponível.
--   [ ] Criar testes para realtime válido, fallback programado, resposta
+-   [x] Criar testes para realtime válido, fallback programado, resposta
     vazia, erro, dados expirados e ausência de serviço.
--   [ ] Implementar por operador, sem criar motor universal
+-   [x] Implementar por operador, sem criar motor universal
     antecipadamente.
 
 **Critérios:** comportamento documentado e testado por operador; nenhum
 horário programado rotulado como realtime; serviços existentes
 preservados.
+
+**Registo de 2026-11-11 --- implementação inicial**
+
+-   Auditoria: a Carris Metropolitana é a única fonte com tempo real e
+    devolve `scheduled_arrival` e `estimated_arrival` no mesmo registo,
+    em hora local (`HH:mm:ss`, sem offset). Numa amostra real de cinco
+    paragens, só 1 a 11 registos (de 94 a 268) tinham estimativa: o
+    fallback por registo é o caso normal, não a exceção. Carris Lisboa,
+    Transitland, CP e Fertagus só têm horário programado e já devolvem
+    `IsRealTime = false`. Os comboios não têm flag e são sempre
+    "Agendado"; não se acrescentou uma flag sem fonte realtime.
+-   Regra aplicada na Carris Metropolitana: previsão legível manda; se
+    já passou, o registo é descartado (não se ressuscita a partida);
+    previsão ausente ou ilegível usa o programado, se futuro. O "agora"
+    passou a ser `Europe/Lisbon` em vez do relógio do dispositivo
+    (`DateTime.Now`).
+-   Indicadores de interface: sem alterações. "Tempo Real"/"Agendado"
+    já existiam para autocarros; erro, vazio e indisponível já são
+    estados distintos.
+-   Modelos: `BusArrival.IsRealTime` chegou; não foi preciso mudar
+    contratos.
+-   Testes: 3 casos novos (previsão válida, previsão ilegível com
+    fallback, previsão expirada descartada); suite em 117.
+-   Pendente: validação manual no browser com dados reais. M13
+    permanece em curso.
 
 ### \[ \] M14 --- Integração de operadores adicionais
 
@@ -1228,11 +1253,15 @@ programados, desde que isso fique explícito.
 
 ## 10. Próximo passo
 
+**M13 em curso — regra de validade e fallback implementada na Carris
+Metropolitana e coberta por testes; falta validar no browser com dados
+reais.**
+
 **M14.1 concluído — Fertagus integrada via `ITrainService` com GTFS
 oficial, favoritos por estação e destino e fluxo validado no browser.**
 
-**Próximo passo do roadmap: M13 — Fallback realtime → programado,** ou a
-continuação do M14 com o Metropolitano de Lisboa. A Transtejo/Soflusa
+**Depois de fechar o M13, o próximo passo é o M14 — Metropolitano de
+Lisboa.** A Transtejo/Soflusa
 continua bloqueada até existir uma URL de GTFS válida. Pendências do
 M12: licença da Carris Lisboa, limites da API da Carris Metropolitana,
 proveniência do feed CP e termos da Fertagus (NAP 185). Limitações ainda

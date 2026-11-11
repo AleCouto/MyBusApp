@@ -54,6 +54,19 @@ A distinção é uma promessa ao utilizador e não pode ser aproximada.
   válida). A precedência normativa e os critérios de aceitação estão na
   secção 5 do [`roadmap.md`](roadmap.md#5-política-de-horários-e-fallback).
 
+### Regra de validade (Carris Metropolitana)
+
+A API devolve `scheduled_arrival` e `estimated_arrival` no mesmo registo, em
+hora local (`HH:mm:ss`, sem offset). A regra aplicada é:
+
+- Previsão presente e legível: é a hora da viagem. Se já passou, a viagem
+  passou e o registo é descartado — **não** se recupera o horário programado.
+- Previsão ausente ou ilegível: usa-se o horário programado, desde que ainda
+  seja futuro; o resultado é marcado como agendado.
+- O "agora" é sempre `Europe/Lisbon`, nunca o relógio do dispositivo.
+- A API não expõe a idade da previsão; a validade é temporal (a hora
+  estimada), não baseada em staleness do dato.
+
 Ao ler GTFS, respeitar calendário, exceções, data, fuso `Europe/Lisbon` e
 horas superiores a 24h. Ao combinar fontes, não duplicar partidas.
 

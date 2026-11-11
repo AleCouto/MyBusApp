@@ -8,6 +8,7 @@ namespace MyBusApp.Services;
 
 public class CarrisMetropolitanaService : IBusService
 {
+    private static readonly TimeZoneInfo LisbonZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Lisbon");
     private readonly HttpClient _http;
     private readonly AppLogger _logger;
     private readonly JsonSerializerOptions  _options = new() { PropertyNameCaseInsensitive = true };
@@ -78,7 +79,8 @@ public class CarrisMetropolitanaService : IBusService
 
         var publicLineNumber = _cachedLines?
             .FirstOrDefault(line => line.Id == lineId)?.ShortName;
-        var currentTime = DateTime.Now.TimeOfDay;
+        // O "agora" é sempre Lisboa: o dispositivo pode estar noutro fuso ou com o relógio errado.
+        var currentTime = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, LisbonZone).TimeOfDay;
 
         var arrivals = rawArrivals
             .Where(a =>
@@ -86,17 +88,19 @@ public class CarrisMetropolitanaService : IBusService
                  RemoveOperatorPrefix(a.RouteId) == lineId ||
                  RemoveOperatorPrefix(a.PatternId).StartsWith(lineId + "_")) &&
                 (string.IsNullOrWhiteSpace(directionId) ||
-                 RemoveOperatorPrefix(a.PatternId) == directionId) &&
-                TryGetArrivalTime(a, out var arrivalTime) && arrivalTime >= currentTime)
-            .OrderBy(a => GetArrivalSortTime(a))
+                 RemoveOperatorPrefix(a.PatternId) == directionId))
+            .Select(a => ResolveArrival(a, currentTime))
+            .Where(candidate => candidate is not null)
+            .Select(candidate => candidate!.Value)
+            .OrderBy(candidate => candidate.Time)
             .Take(5)
-            .Select(a => new BusArrival(
+            .Select(candidate => new BusArrival(
                 string.IsNullOrWhiteSpace(publicLineNumber)
-                    ? RemoveOperatorPrefix(a.LineId)
+                    ? RemoveOperatorPrefix(candidate.Arrival.LineId)
                     : publicLineNumber,
-                a.Headsign,
-                a.DisplayTime,
-                a.IsRealTime))
+                candidate.Arrival.Headsign,
+                FormatArrivalTime(candidate.Time),
+                candidate.IsRealTime))
             .ToList();
 
         _logger.Info(nameof(CarrisMetropolitanaService), $"Arrivals returned for stop '{stopId}' and line '{lineId}': {arrivals.Count}.");
@@ -109,15 +113,28 @@ public class CarrisMetropolitanaService : IBusService
         return prefixEnd >= 0 ? id[(prefixEnd + 1)..] : id;
     }
 
-    private static TimeSpan GetArrivalSortTime(Arrival arrival)
-        => TryGetArrivalTime(arrival, out var time) ? time : TimeSpan.MaxValue;
-
-    private static bool TryGetArrivalTime(Arrival arrival, out TimeSpan time)
+    /// <summary>
+    /// Política de horários: uma previsão válida manda. Se a previsão já passou, a
+    /// viagem passou e não se recupera o horário programado (não se ressuscita uma
+    /// partida). Sem previsão — ausente ou ilegível — usa-se o programado, desde
+    /// que ainda seja futuro.
+    /// </summary>
+    private static (Arrival Arrival, TimeSpan Time, bool IsRealTime)? ResolveArrival(Arrival arrival, TimeSpan now)
     {
-        var value = !string.IsNullOrWhiteSpace(arrival.EstimatedArrival)
-            ? arrival.EstimatedArrival
-            : arrival.ScheduledArrival;
+        if (TryParseApiTime(arrival.EstimatedArrival, out var estimated))
+            return estimated >= now ? (arrival, estimated, true) : null;
 
+        if (TryParseApiTime(arrival.ScheduledArrival, out var scheduled) && scheduled >= now)
+            return (arrival, scheduled, false);
+
+        return null;
+    }
+
+    private static string FormatArrivalTime(TimeSpan time)
+        => $"{(int)time.TotalHours:00}:{time.Minutes:00}";
+
+    private static bool TryParseApiTime(string? value, out TimeSpan time)
+    {
         time = TimeSpan.Zero;
         if (string.IsNullOrWhiteSpace(value)) return false;
 

@@ -78,9 +78,8 @@
                                 }
                                 else if (entry.Favorite.Mode == FavoriteTransportMode.Train)
                                 {
-                                    <h3 class="h6 mb-1">@entry.Favorite.StopName</h3>
+                                    <h3 class="h6 mb-1">Estação · @entry.Favorite.StopName</h3>
                                     <small class="text-muted">
-                                        Estação ·
                                         @(entry.Favorite.DestinationId is null
                                             ? "Destino por selecionar (favorito antigo)"
                                             : $"Destino: {entry.DestinationName ?? "Indisponível"}")
